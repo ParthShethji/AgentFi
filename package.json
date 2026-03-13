@@ -1,0 +1,28 @@
+{
+  "name": "ethmumbai26",
+  "version": "1.0.0",
+  "description": "Starting Hack for EthMumbai 2026",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ParthShethji/Blackflash_Ethmumbai.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/ParthShethji/Blackflash_Ethmumbai/issues"
+  },
+  "homepage": "https://github.com/ParthShethji/Blackflash_Ethmumbai#readme",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.28.6"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.6.1"
+  }
+}
