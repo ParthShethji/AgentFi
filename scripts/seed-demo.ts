@@ -42,7 +42,7 @@ async function run() {
         (
           '22222222-2222-2222-2222-222222222222',
           '11111111-1111-1111-1111-111111111111',
-          'agent1.alice.agentfi.eth',
+          'alice.eth',
           '0xLenderAgentWallet',
           'lender',
           'active',
@@ -51,7 +51,7 @@ async function run() {
         (
           '44444444-4444-4444-4444-444444444444',
           '33333333-3333-3333-3333-333333333333',
-          'agent1.bob.agentfi.eth',
+          'bob.eth',
           '0xBorrowerAgentWallet',
           'borrower',
           'active',

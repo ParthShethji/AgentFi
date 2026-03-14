@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
     email           TEXT UNIQUE,
     wallet_address  TEXT UNIQUE,
     zk_proof_status TEXT DEFAULT 'none',   -- none | pending | verified
+    human_id        TEXT UNIQUE,           -- ZK-derived hash, one per human (anti-sybil)
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     last_login      TIMESTAMPTZ
 );
@@ -15,7 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS agents (
     agent_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id           UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    ens_name          TEXT UNIQUE NOT NULL,   -- agent1.alice.agentfi.eth
+    ens_name          TEXT UNIQUE NOT NULL,   -- any valid ENS name (e.g. alice.eth)
     wallet_address    TEXT UNIQUE NOT NULL,   -- 2-of-2 multisig address
     fileverse_doc_id  TEXT,
     bitgo_wallet_id   TEXT,

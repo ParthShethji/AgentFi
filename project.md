@@ -13,7 +13,7 @@ A **multi-agent P2P lending marketplace** where AI agents autonomously borrow ca
 
 | Concept | One Line |
 |---|---|
-| Agent identity | Each agent = ENS subdomain under `agentfi.eth` |
+| Agent identity | Each agent = user-owned ENS name, ZK-verified to a unique human |
 | Wallet model | 2-of-2 multisig hot wallet, no MetaMask connection |
 | Transaction gate | Auto-sign ≤500 USDC rolling/hr; user approval above |
 | Reputation | 0–50 scale, repayment-only signals, continuous collateral curve |
@@ -34,26 +34,25 @@ A **multi-agent P2P lending marketplace** where AI agents autonomously borrow ca
 | Cache | Redis | Agent live state, rolling tx volume window |
 | Wallet | BitGo SDK | USDC vault, multisig wallet generation |
 | Trading | HeyElsa API | Portfolio construction, swap execution |
-| Identity | ENS (Base Sepolia) | `agentN.username.agentfi.eth` subdomain per agent |
+| Identity | ENS (Base Sepolia) | Any valid ENS name the user owns, verified via wallet + ZK |
 | Strategy storage | Fileverse | Encrypted per-agent risk/signal doc |
 | On-chain rep | PeosFi contracts | Reputation score, loan, repay — Base Sepolia |
-| ZK bootstrap | Reclaim Protocol | One-time human vouching → +8 rep |
+| ZK bootstrap | Reclaim Protocol | Mandatory one-time human verification per ENS (anti-sybil) |
 | Key security | AWS KMS / HSM | Platform co-signer key, never in app memory |
 
 ---
 
 ## Identity Model
 
+Users bring their own ENS name (e.g. `alice.eth`, `vault.base.eth`). Anti-sybil is enforced via mandatory ZK human verification through Reclaim Protocol.
+
 ```
-agentfi.eth (platform root — mandatory, not optional)
-  └── alice.agentfi.eth       (per user)
-        ├── agent1.alice.agentfi.eth   (agentId → multisig wallet addr)
-        └── agent2.alice.agentfi.eth
-  └── bob.agentfi.eth
-        └── agent1.bob.agentfi.eth
+alice.eth       → ZK-verified human #1 → agent wallet (multisig)
+bob.eth         → ZK-verified human #2 → agent wallet (multisig)
+yield-gamma.eth → ZK-verified human #3 → agent wallet (multisig)
 ```
 
-**Why the platform root is non-negotiable:** It is the chain-of-custody proof. The platform issued the subdomain, so it can enforce `userId ↔ agent` binding on-chain. Without it, a user could register two external ENS names and match their own agents to farm reputation.
+**Why ZK verification replaces platform-owned subdomains:** Each ENS name is mapped to a unique human via ZK proof. The `human_id` (derived from the ZK proof) is stored with a UNIQUE constraint in the DB. The same human cannot register a second ENS name, preventing sybil attacks and self-matching. The on-chain `ensNameToWallet` mapping prevents the same ENS from being registered twice.
 
 ### Unified Agent Record (agentId is the spine)
 
@@ -61,12 +60,12 @@ Every external reference maps back to one UUID:
 
 ```
 agentId (UUID, primary key)
-  ├── userId (FK → users table)
-  ├── ensName          → agent1.alice.agentfi.eth
+  ├── userId (FK → users table, with unique human_id from ZK proof)
+  ├── ensName          → alice.eth (user-owned ENS name)
   ├── walletAddress    → multisig 2-of-2 address
   ├── fileverseDocId   → encrypted strategy doc
   ├── bitgoWalletId    → USDC vault reference
-  ├── reputationScore  → live, from PeosFi contract
+  ├── reputationScore  → live, from on-chain contract
   └── event_log rows   → append-only history
 ```
 
@@ -248,7 +247,7 @@ This check lives in the matcher service AND is logged on-chain in the loan recor
 ## Database Schema (key tables)
 
 ```sql
-users         (userId, email, walletAddress, zkProofStatus, createdAt)
+users         (userId, email, walletAddress, zkProofStatus, humanId, createdAt)
 agents        (agentId, userId, ensName, walletAddress, fileverseDocId,
                bitgoWalletId, role, status, reputationScore, createdAt)
 event_log     (eventId, agentId, type, amount, counterpartyAgentId,
@@ -277,7 +276,7 @@ orderbook:borrow               → sorted set by rep
 | Bootstrap amplification | Sibling formula uses cross-user volume only; capped at rep 33 |
 | Transaction splitting | Rolling 60-min cumulative volume gate in Redis |
 | Fake lend offer spoofing | Lender funds escrowed at order-post time; cancel = −1 rep |
-| External ENS self-match bypass | All agents must live under `agentfi.eth` — platform issued only |
+| ENS sybil self-match bypass | ZK human verification: one human per ENS, `human_id` UNIQUE in DB, on-chain `ensNameToWallet` prevents duplicate ENS |
 | Platform key compromise | Co-signer key in KMS/HSM; per-batch rotation; 30-min delay >1000 USDC |
 | Signal oracle manipulation | Alpha excluded from rep; only affects lender's rate pricing |
 | Score decay absence | −0.5/30d after 60 days inactivity |
@@ -313,7 +312,7 @@ The formula stays the same — only the empirical input changes.
 
 ```
 1. Show Fileverse docs — 4 agents, 4 encrypted strategies
-2. Show ENS names registered under agentfi.eth
+2. Show ENS names registered by ZK-verified users
 3. Start all 4 agents — terminal logs light up
 4. agent4 (rep 25) tries to borrow → rejected by vault-alpha (minRep 35)
 5. Human runs ZK proof → agent4 rep goes to 33

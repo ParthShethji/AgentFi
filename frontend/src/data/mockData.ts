@@ -29,7 +29,7 @@ export interface PnLPoint {
 export const AGENTS: Agent[] = [
   {
     id: 'vault-alpha',
-    name: 'vault-alpha.agentfi.eth',
+    name: 'vault-alpha.eth',
     role: 'Lender',
     score: 85,
     status: 'Active',
@@ -40,7 +40,7 @@ export const AGENTS: Agent[] = [
   },
   {
     id: 'trader-beta',
-    name: 'trader-beta.agentfi.eth',
+    name: 'trader-beta.eth',
     role: 'Trader',
     score: 62,
     status: 'Active',
@@ -51,7 +51,7 @@ export const AGENTS: Agent[] = [
   },
   {
     id: 'yield-gamma',
-    name: 'yield-gamma.agentfi.eth',
+    name: 'yield-gamma.eth',
     role: 'Both',
     score: 78,
     status: 'Active',
@@ -62,7 +62,7 @@ export const AGENTS: Agent[] = [
   },
   {
     id: 'arb-delta',
-    name: 'arb-delta.agentfi.eth',
+    name: 'arb-delta.eth',
     role: 'Trader',
     score: 40,
     status: 'Idle',
@@ -144,23 +144,23 @@ export const PNL_TRADER_BETA: PnLPoint[] = [
 
 export const TRADE_HISTORY: Trade[] = [
   // vault-alpha trades
-  { id: 't1', agentId: 'vault-alpha', time: '2026-03-14T07:15:00Z', type: 'Lend', counterparty: 'trader-beta.agentfi.eth', amount: 500, status: 'Active', pnl: 12 },
-  { id: 't2', agentId: 'vault-alpha', time: '2026-03-14T05:02:00Z', type: 'Lend', counterparty: 'yield-gamma.agentfi.eth', amount: 400, status: 'Active', pnl: 8 },
-  { id: 't3', agentId: 'vault-alpha', time: '2026-03-13T22:30:00Z', type: 'Lend', counterparty: 'arb-delta.agentfi.eth', amount: 300, status: 'Completed', pnl: 18 },
-  { id: 't4', agentId: 'vault-alpha', time: '2026-03-13T18:15:00Z', type: 'Lend', counterparty: 'yield-gamma.agentfi.eth', amount: 500, status: 'Completed', pnl: 24 },
-  { id: 't5', agentId: 'vault-alpha', time: '2026-03-12T09:00:00Z', type: 'Lend', counterparty: 'trader-beta.agentfi.eth', amount: 500, status: 'Completed', pnl: 22 },
+  { id: 't1', agentId: 'vault-alpha', time: '2026-03-14T07:15:00Z', type: 'Lend', counterparty: 'trader-beta.eth', amount: 500, status: 'Active', pnl: 12 },
+  { id: 't2', agentId: 'vault-alpha', time: '2026-03-14T05:02:00Z', type: 'Lend', counterparty: 'yield-gamma.eth', amount: 400, status: 'Active', pnl: 8 },
+  { id: 't3', agentId: 'vault-alpha', time: '2026-03-13T22:30:00Z', type: 'Lend', counterparty: 'arb-delta.eth', amount: 300, status: 'Completed', pnl: 18 },
+  { id: 't4', agentId: 'vault-alpha', time: '2026-03-13T18:15:00Z', type: 'Lend', counterparty: 'yield-gamma.eth', amount: 500, status: 'Completed', pnl: 24 },
+  { id: 't5', agentId: 'vault-alpha', time: '2026-03-12T09:00:00Z', type: 'Lend', counterparty: 'trader-beta.eth', amount: 500, status: 'Completed', pnl: 22 },
   // trader-beta trades
-  { id: 't6', agentId: 'trader-beta', time: '2026-03-14T08:00:00Z', type: 'Borrow', counterparty: 'vault-alpha.agentfi.eth', amount: 500, status: 'Active', pnl: -15 },
+  { id: 't6', agentId: 'trader-beta', time: '2026-03-14T08:00:00Z', type: 'Borrow', counterparty: 'vault-alpha.eth', amount: 500, status: 'Active', pnl: -15 },
   { id: 't7', agentId: 'trader-beta', time: '2026-03-14T06:30:00Z', type: 'Swap', counterparty: 'uniswap-v4.eth', amount: 350, status: 'Completed', pnl: -7 },
   { id: 't8', agentId: 'trader-beta', time: '2026-03-13T21:00:00Z', type: 'Swap', counterparty: 'uniswap-v4.eth', amount: 280, status: 'Completed', pnl: 12 },
-  { id: 't9', agentId: 'trader-beta', time: '2026-03-13T14:45:00Z', type: 'Borrow', counterparty: 'yield-gamma.agentfi.eth', amount: 600, status: 'Completed', pnl: -18 },
+  { id: 't9', agentId: 'trader-beta', time: '2026-03-13T14:45:00Z', type: 'Borrow', counterparty: 'yield-gamma.eth', amount: 600, status: 'Completed', pnl: -18 },
   { id: 't10', agentId: 'trader-beta', time: '2026-03-12T11:15:00Z', type: 'Swap', counterparty: 'curve-fi.eth', amount: 450, status: 'Completed', pnl: 34 },
   // yield-gamma trades
-  { id: 't11', agentId: 'yield-gamma', time: '2026-03-14T07:45:00Z', type: 'Lend', counterparty: 'arb-delta.agentfi.eth', amount: 400, status: 'Active', pnl: 6 },
-  { id: 't12', agentId: 'yield-gamma', time: '2026-03-14T04:15:00Z', type: 'Borrow', counterparty: 'vault-alpha.agentfi.eth', amount: 600, status: 'Active', pnl: -4 },
+  { id: 't11', agentId: 'yield-gamma', time: '2026-03-14T07:45:00Z', type: 'Lend', counterparty: 'arb-delta.eth', amount: 400, status: 'Active', pnl: 6 },
+  { id: 't12', agentId: 'yield-gamma', time: '2026-03-14T04:15:00Z', type: 'Borrow', counterparty: 'vault-alpha.eth', amount: 600, status: 'Active', pnl: -4 },
   { id: 't13', agentId: 'yield-gamma', time: '2026-03-13T19:30:00Z', type: 'Swap', counterparty: 'uniswap-v4.eth', amount: 600, status: 'Completed', pnl: 39 },
   // arb-delta trades (one defaulted)
-  { id: 't14', agentId: 'arb-delta', time: '2026-03-10T11:00:00Z', type: 'Borrow', counterparty: 'vault-alpha.agentfi.eth', amount: 300, status: 'Defaulted', pnl: -300 },
+  { id: 't14', agentId: 'arb-delta', time: '2026-03-10T11:00:00Z', type: 'Borrow', counterparty: 'vault-alpha.eth', amount: 300, status: 'Defaulted', pnl: -300 },
   { id: 't15', agentId: 'arb-delta', time: '2026-03-08T09:30:00Z', type: 'Swap', counterparty: 'uniswap-v4.eth', amount: 200, status: 'Completed', pnl: 12 },
 ];
 

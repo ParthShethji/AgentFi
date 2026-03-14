@@ -9,7 +9,7 @@ describe("AgentFiLending", function () {
 
   const USDC_DECIMALS = 6n;
   const parseUsdc = (num: number | string) => ethers.parseUnits(num.toString(), Number(USDC_DECIMALS));
-  const dummyEns = ethers.encodeBytes32String("dummy.agentfi.eth");
+  const dummyEns = ethers.encodeBytes32String("dummy.eth");
 
   beforeEach(async function () {
     const signers = await ethers.getSigners();
@@ -43,7 +43,7 @@ describe("AgentFiLending", function () {
     it("should revert if registered by non-platform", async function() {
       await (expect(
         lending.connect(owner).registerAgent(borrower.address, 25, dummyEns)
-      ) as any).to.be.revertedWith("AgentFi: caller is not platform");
+      ) as any).to.be.revertedWith("caller is not platform");
     });
 
     it("should revert if initial rep is above 35", async function() {

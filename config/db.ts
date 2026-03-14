@@ -23,10 +23,10 @@ function initInMemoryDb() {
   memoryDb.public.none(loadSchemaForPgMem());
 
   memoryDb.public.none(`
-    INSERT INTO users (user_id, email, wallet_address, zk_proof_status)
+    INSERT INTO users (user_id, email, wallet_address, zk_proof_status, human_id)
     VALUES
-      ('11111111-1111-1111-1111-111111111111', 'lender@test.com', '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', 'verified'),
-      ('33333333-3333-3333-3333-333333333333', 'borrower@test.com', '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC', 'verified');
+      ('11111111-1111-1111-1111-111111111111', 'lender@test.com', '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', 'verified', 'human-alice-001'),
+      ('33333333-3333-3333-3333-333333333333', 'borrower@test.com', '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC', 'verified', 'human-bob-002');
 
     INSERT INTO agents (
       agent_id, user_id, ens_name, wallet_address, role, status, reputation_score
@@ -35,7 +35,7 @@ function initInMemoryDb() {
       (
         '22222222-2222-2222-2222-222222222222',
         '11111111-1111-1111-1111-111111111111',
-        'agent1.alice.agentfi.eth',
+        'alice.eth',
         '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
         'lender',
         'active',
@@ -44,7 +44,7 @@ function initInMemoryDb() {
       (
         '44444444-4444-4444-4444-444444444444',
         '33333333-3333-3333-3333-333333333333',
-        'agent1.bob.agentfi.eth',
+        'bob.eth',
         '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
         'borrower',
         'active',

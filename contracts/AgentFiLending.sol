@@ -12,11 +12,13 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  * Design rules:
  *  - Every loan lifecycle event (request, fund, repay, default, liquidate) is on-chain only.
  *  - Collateral is held in this contract. Released on clean repay or seized on default.
- *  - Reputation deltas are emitted as events; the off-chain PeosFi oracle reads them
+ *  - Reputation deltas are emitted as events; the off-chain oracle reads them
  *    and writes the updated score back on-chain via setReputation().
  *  - The platform backend (2-of-2 multisig co-signer) calls fundLoan() after the
  *    off-chain matcher pairs a lender with a borrower.
  *  - No admin can touch user funds except through the defined loan lifecycle.
+ *  - Agents register with any valid ENS name they own. Anti-sybil is enforced
+ *    via ZK human verification at the application layer.
  */
 contract AgentFiLending is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -60,7 +62,7 @@ contract AgentFiLending is Ownable, ReentrancyGuard {
     mapping(address => uint256[]) public agentLoansAsLender;
 
     // ENS identity bindings (set at registration, immutable)
-    // ensNameHash = keccak256(abi.encodePacked(ensName))
+    // ensNameHash = keccak256(abi.encodePacked(ensName)), e.g. "alice.eth"
     mapping(bytes32 => address) public ensNameToWallet;
     mapping(address => bytes32) public walletToEnsName;
 
@@ -107,7 +109,7 @@ contract AgentFiLending is Ownable, ReentrancyGuard {
     // ─── Modifiers ────────────────────────────────────────────────────────────
 
     modifier onlyPlatform() {
-        require(msg.sender == platformSigner, "AgentFi: caller is not platform");
+        require(msg.sender == platformSigner, "caller is not platform");
         _;
     }
 
@@ -120,9 +122,10 @@ contract AgentFiLending is Ownable, ReentrancyGuard {
 
     /**
      * Called by platform when a new agent is created.
-     * Sets initial reputation score and binds the ENS subdomain to the agent wallet.
-     * ensNameHash = keccak256(abi.encodePacked("agent1.alice.agentfi.eth")).
+     * Sets initial reputation score and binds the ENS name to the agent wallet.
+     * ensNameHash = keccak256(abi.encodePacked("alice.eth")).
      * Agent wallet must be the 2-of-2 multisig address.
+     * Anti-sybil: each ENS name is ZK-verified to a unique human off-chain.
      */
     function registerAgent(address agent, uint8 initialScore, bytes32 ensNameHash) external onlyPlatform {
         require(agentRep[agent].lastActivityAt == 0, "AgentFi: already registered");

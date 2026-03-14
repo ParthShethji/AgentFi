@@ -67,8 +67,8 @@ describe("Blockchain Service", () => {
       lenderWallet: "0xL",
       principalUsdc: 100,
       interestUsdc: 2,
-      borrowerEns: "bob.agentfi.eth",
-      lenderEns: "alice.agentfi.eth"
+      borrowerEns: "bob.eth",
+      lenderEns: "alice.eth"
     });
 
     expect(res.loanId).toBe(1);

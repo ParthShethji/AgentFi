@@ -138,7 +138,7 @@ export async function postLendOffer({ lenderAgentId, maxAmountUsdc, minRepRequir
   if (lender.status !== "active") throw new Error("Lender agent is not active");
 
   // ── ENS integrity: confirm this agent's ENS name is genuinely bound to this wallet ──
-  await verifyAgentEnsIntegrity(lender.wallet_address, lender.ens_name, lender.user_id);
+  await verifyAgentEnsIntegrity(lender.wallet_address, lender.ens_name);
 
   await blockchain.ensureAgentRegistered(lender.wallet_address, lender.ens_name, lender.reputation_score || 35);
 
@@ -194,7 +194,7 @@ export async function requestBorrow({ borrowerAgentId, requestedAmountUsdc }: an
   if (borrower.status !== "active") throw new Error("Borrower agent is not active");
 
   // ── ENS integrity: confirm this agent's ENS name is genuinely bound to this wallet ──
-  await verifyAgentEnsIntegrity(borrower.wallet_address, borrower.ens_name, borrower.user_id);
+  await verifyAgentEnsIntegrity(borrower.wallet_address, borrower.ens_name);
 
   await blockchain.ensureAgentRegistered(borrower.wallet_address, borrower.ens_name, borrower.reputation_score || 25);
 

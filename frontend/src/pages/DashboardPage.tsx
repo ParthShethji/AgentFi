@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { Plus } from 'lucide-react';
@@ -6,6 +8,7 @@ import { AGENTS, DASHBOARD_STATS, PORTFOLIO, Agent } from '../data/mockData';
 import AmbientBackground from '../components/AmbientBackground';
 import AgentDetailPanel from '../components/AgentDetailPanel';
 import { useApp } from '../context/AppContext';
+import { useApi } from '../context/ApiContext';
 
 // ── Count-up hook ────────────────────────────────────────────────────────────
 function useCountUp(target: number, duration = 800) {
@@ -99,11 +102,54 @@ function ScoreBar({ score }: { score: number }) {
 }
 
 // ── Main Dashboard ───────────────────────────────────────────────────────────
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isBackendAgentId(id: string) {
+  return UUID_REGEX.test(id);
+}
+
 export default function DashboardPage() {
-  const { selectedAgent, setSelectedAgent, setCurrentView } = useApp();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { api } = useApi();
+  const { selectedAgent, setSelectedAgent, createdAgentId, createdAgentEnsName } = useApp();
   const [portfolioView, setPortfolioView] = useState<'chart' | 'numbers'>('chart');
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [borrowAmount, setBorrowAmount] = useState<string>('100');
+  const [borrowQuote, setBorrowQuote] = useState<Awaited<ReturnType<typeof api.getBorrowQuote>> | null>(null);
   const bodyDimmed = !!selectedAgent;
+
+  const { data: offersData, isLoading: offersLoading, error: offersError } = useQuery({
+    queryKey: ['offers', 0, 1000],
+    queryFn: () => api.getOffers(0, 1000),
+  });
+  const offers = offersData?.offers ?? [];
+
+  const requestBorrowMutation = useMutation({
+    mutationFn: (payload: { borrowerAgentId: string; requestedAmountUsdc: number }) => api.requestBorrow(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['offers'] });
+      queryClient.invalidateQueries({ queryKey: ['agentLoans'] });
+      setBorrowQuote(null);
+    },
+  });
+
+  const agentsList = useMemo(() => {
+    const list: Agent[] = [...AGENTS];
+    if (createdAgentId && createdAgentEnsName) {
+      list.unshift({
+        id: createdAgentId,
+        name: createdAgentEnsName,
+        role: 'Lender',
+        score: 25,
+        status: 'Active',
+        capital: 0,
+        pnlToday: 0,
+        lent: 0,
+        borrowed: 0,
+      });
+    }
+    return list;
+  }, [createdAgentId, createdAgentEnsName]);
 
   const pieData = [
     { name: 'Debt', value: PORTFOLIO.debt.value, color: PORTFOLIO.debt.color },
@@ -133,6 +179,85 @@ export default function DashboardPage() {
             <StatCard label="LENT OUT" value={DASHBOARD_STATS.lentOut} prefix="$" trend="+2.4%" subtitle="5 active positions" />
             <StatCard label="BORROWED" value={DASHBOARD_STATS.borrowed} prefix="$" subtitle="2 open loans" />
             <StatCard label="OUTSTANDING DEBT" value={DASHBOARD_STATS.outstandingDebt} prefix="$" subtitle={`$${DASHBOARD_STATS.debtInterest} in interest`} />
+          </div>
+
+          {/* ── Open Lending Offers (from API) ── */}
+          <div className="glass" style={{ padding: '28px 32px', marginBottom: 24, borderRadius: 16 }}>
+            <h2 style={{ fontFamily: 'Cormorant Garamond', fontSize: 26, fontWeight: 400, color: 'var(--text-primary)', marginBottom: 16 }}>
+              Open lending offers
+            </h2>
+            {offersLoading ? (
+              <p style={{ fontFamily: 'Inter', fontSize: 14, color: 'var(--text-secondary)' }}>Loading offers…</p>
+            ) : offersError ? (
+              <p style={{ fontFamily: 'Inter', fontSize: 14, color: 'var(--danger)' }}>
+                {offersError instanceof Error ? offersError.message : 'Failed to load offers'}
+              </p>
+            ) : offers.length === 0 ? (
+              <p style={{ fontFamily: 'Inter', fontSize: 14, color: 'var(--text-secondary)' }}>No open offers.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {offers.map((o) => (
+                  <div key={o.offer_id} className="glass" style={{ padding: '16px 20px', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+                    <span style={{ fontFamily: 'JetBrains Mono', fontSize: 13, color: 'var(--text-primary)' }}>{o.ens_name}</span>
+                    <span style={{ fontFamily: 'Inter', fontSize: 13, color: 'var(--text-secondary)' }}>min rep {o.min_rep_required}</span>
+                    <span style={{ fontFamily: 'JetBrains Mono', fontSize: 13, color: 'var(--accent)' }}>${o.max_amount_usdc} max</span>
+                    <span style={{ fontFamily: 'Inter', fontSize: 13, color: 'var(--text-secondary)' }}>{o.rate_pct}%</span>
+                  </div>
+                ))}
+                {createdAgentId && (
+                  <div className="glass" style={{ padding: '20px', borderRadius: 12, marginTop: 8, border: '1px solid var(--border)' }}>
+                    <p className="label-muted" style={{ marginBottom: 12 }}>Request borrow (as your agent)</p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
+                      <input
+                        type="number"
+                        min={10}
+                        max={1000}
+                        value={borrowAmount}
+                        onChange={(e) => setBorrowAmount(e.target.value)}
+                        style={{ width: 100, padding: '8px 12px', fontFamily: 'JetBrains Mono', fontSize: 13, background: 'var(--glass-elevated-bg)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)' }}
+                      />
+                      <span style={{ fontFamily: 'Inter', fontSize: 13, color: 'var(--text-secondary)' }}>USDC</span>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ height: 36, padding: '0 16px', fontSize: 13 }}
+                        onClick={async () => {
+                          const amount = Number(borrowAmount);
+                          if (!Number.isFinite(amount) || amount < 10 || amount > 1000) return;
+                          try {
+                            const q = await api.getBorrowQuote(createdAgentId, amount);
+                            setBorrowQuote(q);
+                          } catch {
+                            setBorrowQuote(null);
+                          }
+                        }}
+                      >
+                        Get quote
+                      </button>
+                      {borrowQuote && (
+                        <>
+                          <span style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)' }}>
+                            Total owed: ${borrowQuote.totalOwedUsdc.toFixed(2)} ({borrowQuote.ratePct}%)
+                          </span>
+                          <button
+                            className="btn btn-primary glow-accent"
+                            style={{ height: 36, padding: '0 18px', fontSize: 13 }}
+                            disabled={requestBorrowMutation.isPending}
+                            onClick={() => requestBorrowMutation.mutate({ borrowerAgentId: createdAgentId, requestedAmountUsdc: Number(borrowAmount) })}
+                          >
+                            {requestBorrowMutation.isPending ? 'Requesting…' : 'Request borrow'}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    {requestBorrowMutation.isError && (
+                      <p style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>
+                        {requestBorrowMutation.error instanceof Error ? requestBorrowMutation.error.message : 'Request failed'}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* ── Portfolio Visualization ── */}
@@ -257,7 +382,7 @@ export default function DashboardPage() {
               <button
                 className="btn btn-ghost"
                 style={{ height: 38, padding: '0 18px', fontSize: 13 }}
-                onClick={() => setCurrentView('onboarding')}
+                onClick={() => navigate('/onboarding')}
                 id="new-agent-btn"
               >
                 <Plus size={14} /> New Agent
@@ -277,7 +402,7 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {AGENTS.map((agent, i) => (
+                  {agentsList.map((agent, i) => (
                     <motion.tr
                       key={agent.id}
                       initial={{ opacity: 0, x: -8 }}
@@ -339,6 +464,7 @@ export default function DashboardPage() {
         {selectedAgent && (
           <AgentDetailPanel
             agent={selectedAgent}
+            backendAgentId={isBackendAgentId(selectedAgent.id) ? selectedAgent.id : undefined}
             onClose={() => setSelectedAgent(null)}
           />
         )}

@@ -4,7 +4,7 @@ AgentFi is a **multi-agent P2P lending marketplace** where AI agents autonomousl
 
 ## Project Overview
 
-- **Agent Identity**: Each agent is an ENS subdomain under `agentfi.eth`.
+- **Agent Identity**: Each agent registers with any valid ENS name they own. Anti-sybil is enforced via ZK human verification.
 - **Wallet Model**: 2-of-2 multisig hot wallet (Agent key + Platform co-signer key).
 - **Reputation System**: Rep-based loan terms and collateral requirements (0-50 scale).
 - **Matching Engine**: Platform acts as a market maker, matching lender offers with borrower requests.
@@ -115,7 +115,7 @@ npm run test:backend
 
 ## 🌐 Testnet Runbook (Base Sepolia)
 
-1. Set `RPC_URL`, `PLATFORM_PRIVATE_KEY`, and `ENS_DEPLOYER_KEY` in `.env`.
+1. Set `RPC_URL` and `PLATFORM_PRIVATE_KEY` in `.env`.
 2. Deploy to Base Sepolia: `npm run deploy:base-sepolia`.
 3. Fund the generated agent wallets with test USDC and ETH.
 4. Use the frontend "Onboarding" section to register agents.

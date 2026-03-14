@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, RefreshCw, Edit3, Lock } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, defs, linearGradient, stop, Area, AreaChart } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { Agent, TRADE_HISTORY, PNL_VAULT_ALPHA, PNL_TRADER_BETA } from '../data/mockData';
+import { useApi } from '../context/ApiContext';
 
 interface Props {
   agent: Agent;
+  backendAgentId?: string;
   onClose: () => void;
 }
 
@@ -56,9 +59,10 @@ function TradeTooltip({ time }: { time: string }) {
   );
 }
 
-export default function AgentDetailPanel({ agent, onClose }: Props) {
+export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Props) {
+  const { api } = useApi();
+  const queryClient = useQueryClient();
   const [tradeFilter, setTradeFilter] = useState<TradeFilter>('All');
-  const [tradeFilter2, setTradeFilter2] = useState<TradeFilter>('All');
   const [page, setPage] = useState(1);
   const [editMode, setEditMode] = useState(false);
   const [strategy, setStrategy] = useState(
@@ -69,6 +73,30 @@ export default function AgentDetailPanel({ agent, onClose }: Props) {
       : 'Only lend to agents with reputation above 80.\nMaximum single loan: 500 USDC.\nMaximum concurrent loans: 3.\nMinimum interest rate: 2%.\n\nBorrow maximum 800 USDC per opportunity.\nStop-loss at 5%. Take-profit at 12%.\nOnly trade on Base network.\nPreferred assets: USDC, ETH, cbBTC.'
   );
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
+
+  const { data: agentRep, isLoading: repLoading } = useQuery({
+    queryKey: ['agentRep', backendAgentId],
+    queryFn: () => api.getAgentRep(backendAgentId!),
+    enabled: !!backendAgentId,
+  });
+  const { data: agentLoansData, isLoading: loansLoading } = useQuery({
+    queryKey: ['agentLoans', backendAgentId],
+    queryFn: () => api.getAgentLoans(backendAgentId!, 'borrower'),
+    enabled: !!backendAgentId,
+  });
+  const loans = agentLoansData?.loans ?? [];
+
+  const repayMutation = useMutation({
+    mutationFn: (payload: { matchId: number; borrowerAgentId: string; profitGeneratedUsdc: number }) => api.repay(payload),
+    onSuccess: () => {
+      if (backendAgentId) {
+        queryClient.invalidateQueries({ queryKey: ['agentLoans', backendAgentId] });
+        queryClient.invalidateQueries({ queryKey: ['agentRep', backendAgentId] });
+      }
+    },
+  });
+
+  const displayScore = backendAgentId && agentRep ? agentRep.score : agent.score;
 
   const pnlData = agent.id === 'vault-alpha' ? PNL_VAULT_ALPHA
     : agent.id === 'trader-beta' ? PNL_TRADER_BETA
@@ -148,7 +176,7 @@ export default function AgentDetailPanel({ agent, onClose }: Props) {
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <span className={`badge badge-${agent.role.toLowerCase()}`}>{agent.role}</span>
               <span className="glass" style={{ borderRadius: 100, padding: '3px 10px', fontFamily: 'JetBrains Mono', fontSize: 11, color: 'var(--accent)' }}>
-                {agent.score}/100
+                {backendAgentId && repLoading ? '…' : displayScore}/100
               </span>
               <span className={`badge badge-${agent.status.toLowerCase()}`}>{agent.status}</span>
             </div>
@@ -185,18 +213,62 @@ export default function AgentDetailPanel({ agent, onClose }: Props) {
 
           {/* ── Stats Strip ── */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
-            {[
-              { label: 'Loans Taken', val: agent.id === 'vault-alpha' ? 12 : agent.id === 'trader-beta' ? 8 : 5 },
-              { label: 'Repaid On-Time', val: agent.id === 'vault-alpha' ? 11 : agent.id === 'trader-beta' ? 7 : 5 },
-              { label: 'Defaults', val: agent.id === 'arb-delta' ? 1 : 0 },
-              { label: 'Volume', val: agent.id === 'vault-alpha' ? '$8,400' : agent.id === 'trader-beta' ? '$6,100' : '$4,200' },
-            ].map(s => (
+            {(backendAgentId && agentRep
+              ? [
+                  { label: 'Loans Taken', val: agentRep.totalLoans },
+                  { label: 'Repaid On-Time', val: agentRep.cleanRepayments },
+                  { label: 'Defaults', val: agentRep.defaults },
+                  { label: 'Max Loan', val: agentRep.maxLoanUsdc != null ? `$${agentRep.maxLoanUsdc}` : '—' },
+                ]
+              : [
+                  { label: 'Loans Taken', val: agent.id === 'vault-alpha' ? 12 : agent.id === 'trader-beta' ? 8 : 5 },
+                  { label: 'Repaid On-Time', val: agent.id === 'vault-alpha' ? 11 : agent.id === 'trader-beta' ? 7 : 5 },
+                  { label: 'Defaults', val: agent.id === 'arb-delta' ? 1 : 0 },
+                  { label: 'Volume', val: agent.id === 'vault-alpha' ? '$8,400' : agent.id === 'trader-beta' ? '$6,100' : '$4,200' },
+                ]
+            ).map(s => (
               <div key={s.label} className="glass" style={{ padding: '7px 14px', borderRadius: 100, display: 'flex', gap: 6, alignItems: 'center' }}>
                 <span style={{ fontFamily: 'Inter', fontSize: 11, color: 'var(--text-secondary)' }}>{s.label}:</span>
                 <span style={{ fontFamily: 'JetBrains Mono', fontSize: 12, color: 'var(--accent)' }}>{s.val}</span>
               </div>
             ))}
           </div>
+
+          {/* ── Open loans (from API when backend agent) ── */}
+          {backendAgentId && (
+            <div className="glass" style={{ padding: '20px 24px', marginBottom: 20, borderRadius: 14 }}>
+              <p className="label-muted" style={{ marginBottom: 12 }}>LOANS</p>
+              {loansLoading ? (
+                <p style={{ fontFamily: 'Inter', fontSize: 13, color: 'var(--text-secondary)' }}>Loading…</p>
+              ) : loans.length === 0 ? (
+                <p style={{ fontFamily: 'Inter', fontSize: 13, color: 'var(--text-secondary)' }}>No loans</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {loans.map((loan) => (
+                    <div key={loan.loanId} style={{ padding: '12px 16px', background: 'var(--glass-elevated-bg)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <span style={{ fontFamily: 'JetBrains Mono', fontSize: 12, color: 'var(--text-primary)' }}>Loan #{loan.loanId}</span>
+                        <span className={`badge badge-${(loan.status || '').toLowerCase()}`} style={{ fontSize: 10 }}>{loan.status}</span>
+                      </div>
+                      <div style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)' }}>
+                        ${loan.principalUsdc} principal · ${loan.interestUsdc} interest
+                      </div>
+                      {loan.status === 'Active' && backendAgentId && (
+                        <button
+                          className="btn btn-ghost"
+                          style={{ marginTop: 8, height: 28, padding: '0 12px', fontSize: 11 }}
+                          disabled
+                          title="Repay requires matchId from backend (not yet in loan response)"
+                        >
+                          Repay
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── Strategy ── */}
           <div className="glass" style={{ padding: '20px 24px', marginBottom: 20, borderRadius: 14, borderColor: editMode ? 'rgba(16,185,129,0.3)' : undefined, boxShadow: editMode ? '0 0 16px rgba(16,185,129,0.08)' : undefined }}>

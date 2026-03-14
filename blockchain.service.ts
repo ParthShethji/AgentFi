@@ -473,7 +473,7 @@ const ENS_RESOLVER_ABI = [
 
 /**
  * Returns a namehash for an ENS domain using ethers built-in.
- * Example: namehash("agent1.alice.agentfi.eth")
+ * Example: namehash("alice.eth")
  */
 function ensNamehash(name: string): string {
   return ethers.namehash(name);
@@ -515,8 +515,7 @@ export async function resolveAddressToEns(wallet: string): Promise<string | null
 }
 
 /**
- * Fetches the ENSIP-25 Text Record for a given ENS name and key.
- * We use key "agentfi.userId" to store userId binding.
+ * Fetches an ENS Text Record for a given ENS name and key.
  * Returns null if ENS is not configured.
  */
 export async function getEnsTextRecord(ensName: string, key: string): Promise<string | null> {
@@ -532,45 +531,17 @@ export async function getEnsTextRecord(ensName: string, key: string): Promise<st
 }
 
 /**
- * Writes an ENSIP-25 Text Record for a given ENS name and key.
- * Must be called with a wallet that is the ENS controller/owner of that name.
- * No-ops gracefully if ENS_RESOLVER_ADDRESS is not set (local dev mode).
- */
-export async function writeEnsTextRecord(
-  ensName: string,
-  key: string,
-  value: string,
-  signerPrivateKey: string
-): Promise<void> {
-  const resolverAddress = process.env.ENS_RESOLVER_ADDRESS;
-  if (!resolverAddress) {
-    logger.warn(`[ens] ENS_RESOLVER_ADDRESS not set – skipping setText for ${ensName}[${key}]`);
-    return;
-  }
-  const signer = new ethers.Wallet(signerPrivateKey, provider);
-  const resolver = new ethers.Contract(resolverAddress, ENS_RESOLVER_ABI, signer);
-  const node = ensNamehash(ensName);
-  const tx = await resolver.setText(node, key, value);
-  await tx.wait(1);
-  logger.info(`[ens] wrote text record ${ensName}[${key}] = ${value}`);
-}
-
-/**
- * Master verification function.
+ * Verify agent ENS integrity.
  * Checks:
- *  1. Forward resolution: ENS name → resolved address == agentWallet
- *  2. Text Record: ENS name, key "agentfi.userId" == expectedUserId
- *  3. On-chain contract binding: contract.verifyEns(ensNameHash, agentWallet) == true
+ *  1. On-chain contract binding: contract.verifyEns(ensNameHash, agentWallet) == true
+ *  2. Forward ENS resolution: ENS name resolves to expected wallet (when resolver configured)
  *
- * In local dev mode (no ENS_RESOLVER_ADDRESS), skips checks 1 & 2 but still
- * checks the on-chain contract binding which is always available.
- *
- * Throws ENS_MISMATCH error if any check fails.
+ * Anti-sybil is enforced via ZK human verification at the application layer,
+ * not via platform-owned ENS subdomains.
  */
 export async function verifyAgentEnsIntegrity(
   agentWallet: string,
   ensName: string,
-  expectedUserId: string
 ): Promise<void> {
   const ensNameHash = ethers.keccak256(ethers.toUtf8Bytes(ensName));
   const resolverConfigured = !!process.env.ENS_RESOLVER_ADDRESS;
@@ -581,17 +552,15 @@ export async function verifyAgentEnsIntegrity(
     if (!isValid) {
       throw new Error(
         `ENS_MISMATCH: On-chain contract binding failed. ` +
-        `ENS "${ensName}" is not bound to wallet ${agentWallet} in AgentFiLending contract.`
+        `ENS "${ensName}" is not bound to wallet ${agentWallet} in lending contract.`
       );
     }
   } catch (err: any) {
     if (err.message.startsWith("ENS_MISMATCH")) throw err;
-    // Contract call itself failed (e.g. no bytecode) — treat as pass in local dev
     logger.warn(`[ens] contract.verifyEns call failed (non-fatal in local dev): ${err.message}`);
   }
 
   if (!resolverConfigured) {
-    // Local dev — skip resolver-based checks
     return;
   }
 
@@ -604,14 +573,5 @@ export async function verifyAgentEnsIntegrity(
     );
   }
 
-  // ── Check 3: ENSIP-25 userId text record ──
-  const recordedUserId = await getEnsTextRecord(ensName, "agentfi.userId");
-  if (recordedUserId && recordedUserId !== expectedUserId) {
-    throw new Error(
-      `ENS_MISMATCH: Text record agentfi.userId for "${ensName}" is "${recordedUserId}", ` +
-      `expected "${expectedUserId}".`
-    );
-  }
-
-  logger.info(`[ens] integrity verified for ${ensName} → ${agentWallet} (userId: ${expectedUserId})`);
+  logger.info(`[ens] integrity verified for ${ensName} → ${agentWallet}`);
 }
