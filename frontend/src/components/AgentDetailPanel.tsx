@@ -6,7 +6,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, Area
 import { Agent, TRADE_HISTORY, PNL_VAULT_ALPHA, PNL_TRADER_BETA } from '../data/mockData';
 import { useApi } from '../context/ApiContext';
 import { useApp } from '../context/AppContext';
-import { getChainLabel, sendEthToAgent, sendUsdcToAgent } from '../wallet/metamask';
+import { getChainLabel, sendEthToAgent, sendUsdcToAgent, switchToBaseSepolia } from '../wallet/metamask';
 
 interface Props {
   agent: Agent;
@@ -63,7 +63,7 @@ function TradeTooltip({ time }: { time: string }) {
 
 export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Props) {
   const { api } = useApi();
-  const { walletChainId } = useApp();
+  const { walletChainId, userId } = useApp();
   const queryClient = useQueryClient();
   const [tradeFilter, setTradeFilter] = useState<TradeFilter>('All');
   const [page, setPage] = useState(1);
@@ -153,6 +153,20 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
     }
   };
 
+  const refreshAgentViews = async () => {
+    const invalidations: Promise<unknown>[] = [];
+    if (backendAgentId) {
+      invalidations.push(queryClient.invalidateQueries({ queryKey: ['agentRuntime', backendAgentId] }));
+      invalidations.push(queryClient.invalidateQueries({ queryKey: ['agentRep', backendAgentId] }));
+      invalidations.push(queryClient.invalidateQueries({ queryKey: ['agentLoans', backendAgentId] }));
+    }
+    if (userId) {
+      invalidations.push(queryClient.invalidateQueries({ queryKey: ['userAgents', userId] }));
+    }
+    invalidations.push(queryClient.invalidateQueries({ queryKey: ['adminOverview'] }));
+    await Promise.all(invalidations);
+  };
+
   const handleFund = async () => {
     if (!runtimeData?.agent.wallet_address) return;
 
@@ -166,9 +180,12 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
     }
 
     setFundingState('sending');
-    setFundingMessage('Waiting for wallet confirmations...');
+    setFundingMessage('Switching to Base Sepolia...');
 
     try {
+      await switchToBaseSepolia();
+      setFundingMessage('Waiting for wallet confirmations on Base Sepolia...');
+
       const txHashes: string[] = [];
       if (ethAmount) {
         txHashes.push(await sendEthToAgent(runtimeData.agent.wallet_address, ethAmount));
@@ -185,11 +202,7 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
       setFundingMessage(`Confirmed ${txHashes.length} funding transaction${txHashes.length > 1 ? 's' : ''}.`);
       setFundEthAmount('');
       setFundUsdcAmount('');
-      if (backendAgentId) {
-        queryClient.invalidateQueries({ queryKey: ['agentRuntime', backendAgentId] });
-        queryClient.invalidateQueries({ queryKey: ['userAgents'] });
-        queryClient.invalidateQueries({ queryKey: ['adminOverview'] });
-      }
+      await refreshAgentViews();
     } catch (error: any) {
       setFundingState('error');
       setFundingMessage(error?.message || 'Funding transaction failed.');
@@ -245,13 +258,7 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
                 <button
                   title="Refresh"
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
-                  onClick={() => {
-                    if (backendAgentId) {
-                      queryClient.invalidateQueries({ queryKey: ['agentRuntime', backendAgentId] });
-                      queryClient.invalidateQueries({ queryKey: ['agentRep', backendAgentId] });
-                      queryClient.invalidateQueries({ queryKey: ['agentLoans', backendAgentId] });
-                    }
-                  }}
+                  onClick={() => { void refreshAgentViews(); }}
                 >
                   <RefreshCw size={16} />
                 </button>
@@ -294,6 +301,9 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
 
               <div style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
                 Funding here uses the connected user wallet directly via ethers. Nothing is minted or pushed from the backend automatically.
+              </div>
+              <div style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                Funding network: <span style={{ color: 'var(--text-primary)' }}>Base Sepolia</span>. If MetaMask is on another chain, the app will switch it before sending.
               </div>
               <div style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
                 Connected network: <span style={{ color: 'var(--text-primary)' }}>{getChainLabel(walletChainId)}</span>

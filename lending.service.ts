@@ -147,8 +147,10 @@ export async function postLendOffer({ lenderAgentId, maxAmountUsdc, minRepRequir
 
   const allowance = await blockchain.checkAllowance(lender.wallet_address);
   if (allowance < maxAmountUsdc) {
-    const { getAgentPrivateKey } = require("./config/agentKeys");
-    const privateKey = getAgentPrivateKey(lender.wallet_address);
+    const { getAgentPrivateKey, loadAgentPrivateKey } = require("./config/agentKeys");
+    const privateKey =
+      getAgentPrivateKey(lender.wallet_address) ||
+      await loadAgentPrivateKey(lender.wallet_address);
     if (privateKey) {
       await blockchain.approveUsdc(privateKey, maxAmountUsdc * 10);
     } else {

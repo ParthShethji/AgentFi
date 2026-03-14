@@ -885,6 +885,30 @@ body {
   z-index: 2;
 }
 
+.dashboard-grid > * {
+  min-width: 0;
+}
+
+.feed-log-card {
+  min-width: 0;
+}
+
+.feed-log-header {
+  min-width: 0;
+}
+
+.feed-log-message {
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /* Transition all CSS vars on theme change */
 *, *::before, *::after {
   transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
@@ -952,6 +976,11 @@ canvas {
   .section-container {
     padding: 0 20px;
   }
+
+  .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
   .step-nav {
     right: 12px;
   }

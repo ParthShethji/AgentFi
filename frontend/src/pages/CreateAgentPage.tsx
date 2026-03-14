@@ -502,17 +502,38 @@ function LaunchView({
           disabled={creating}
           id="launch-agent-btn"
         >
-          {creating ? (creatingStep || 'Creating agent...') : 'Launch & View Dashboard →'}
+          {creating ? 'Creating agent...' : 'Launch & View Dashboard →'}
         </button>
         {creating && creatingStep && (
-          <p style={{ fontFamily: 'Inter', fontSize: 11, color: 'var(--text-tertiary)', textAlign: 'center', whiteSpace: 'pre-line', lineHeight: 1.6 }}>
-            {creatingStep}
-          </p>
+          <div
+            className="glass"
+            style={{
+              padding: '14px 16px',
+              borderRadius: 12,
+              background: 'rgba(16, 185, 129, 0.08)',
+              borderColor: 'rgba(16, 185, 129, 0.18)',
+              textAlign: 'left',
+            }}
+          >
+            <p
+              style={{
+                fontFamily: 'Inter',
+                fontSize: 12,
+                color: 'var(--text-primary)',
+                whiteSpace: 'pre-line',
+                lineHeight: 1.6,
+                margin: 0,
+              }}
+            >
+              {creatingStep}
+            </p>
+          </div>
         )}
         <button
           className="btn btn-ghost btn-full"
           onClick={onCreateAnother}
           id="create-another-btn"
+          disabled={creating}
         >
           Create another agent
         </button>

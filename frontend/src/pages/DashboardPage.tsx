@@ -135,8 +135,8 @@ export default function DashboardPage() {
             <StatCard label="Borrowed" value={overviewLoading ? '...' : `$${summary.totalBorrowed.toFixed(2)}`} />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.9fr', gap: 20, alignItems: 'start' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.3fr) minmax(0, 0.9fr)', gap: 20, alignItems: 'start' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20, minWidth: 0 }}>
               <div className="glass" style={{ padding: '24px 28px', borderRadius: 18 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                   <h2 style={{ fontFamily: 'Cormorant Garamond', fontSize: 28, color: 'var(--text-primary)' }}>Your Runtime Agents</h2>
@@ -149,7 +149,7 @@ export default function DashboardPage() {
                     <motion.div
                       key={agent.agent_id}
                       className="glass"
-                      style={{ padding: '18px 20px', borderRadius: 14, cursor: 'pointer' }}
+                      style={{ padding: '18px 20px', borderRadius: 14, cursor: 'pointer', minWidth: 0 }}
                       whileHover={{ y: -2 }}
                       onClick={() => setSelectedAgent(toPanelAgent(agent))}
                     >
@@ -243,14 +243,14 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="glass" style={{ padding: '24px 28px', borderRadius: 18 }}>
+              <div className="glass" style={{ padding: '24px 28px', borderRadius: 18, minWidth: 0 }}>
                 <h2 style={{ fontFamily: 'Cormorant Garamond', fontSize: 28, color: 'var(--text-primary)', marginBottom: 16 }}>
                   Agent Thinking Feed
                 </h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 560, overflowY: 'auto', paddingRight: 4 }}>
                   {(adminOverview?.recentLogs ?? []).map((log) => (
-                    <div key={log.log_id} className="glass" style={{ padding: '14px 16px', borderRadius: 12 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
+                    <div key={log.log_id} className="glass feed-log-card" style={{ padding: '14px 16px', borderRadius: 12 }}>
+                      <div className="feed-log-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
                         <div style={{ fontFamily: 'JetBrains Mono', fontSize: 12, color: 'var(--accent)' }}>
                           {log.ens_name}
                         </div>
@@ -261,7 +261,11 @@ export default function DashboardPage() {
                       <div style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
                         {log.role} | {log.phase} {log.tool_name ? `| tool ${log.tool_name}` : ''}
                       </div>
-                      <div style={{ fontFamily: 'Inter', fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                      <div
+                        className="feed-log-message"
+                        title={log.message}
+                        style={{ fontFamily: 'Inter', fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.5 }}
+                      >
                         {log.message}
                       </div>
                     </div>
@@ -275,7 +279,7 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20, minWidth: 0 }}>
               <div className="glass" style={{ padding: '24px 28px', borderRadius: 18 }}>
                 <h2 style={{ fontFamily: 'Cormorant Garamond', fontSize: 28, color: 'var(--text-primary)', marginBottom: 16 }}>
                   Open Lending Offers

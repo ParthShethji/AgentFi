@@ -9,16 +9,32 @@ import { agentRuntimeManager } from "./runtime.manager";
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+const configuredOrigins = (process.env.FRONTEND_ORIGIN || "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const allowedOrigins = new Set([
+  ...configuredOrigins,
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+]);
 
 app.use(express.json());
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", frontendOrigin);
-  res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+  const requestOrigin = typeof req.headers.origin === "string" ? req.headers.origin : "";
+  const allowOrigin = !requestOrigin || allowedOrigins.has(requestOrigin);
+
+  if (allowOrigin) {
+    res.header("Access-Control-Allow-Origin", requestOrigin || configuredOrigins[0] || "http://localhost:5173");
+  }
+
+  res.header("Vary", "Origin");
+  res.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type,Authorization");
+  res.header("Access-Control-Allow-Credentials", "true");
 
   if (req.method === "OPTIONS") {
-    return res.sendStatus(204);
+    return res.sendStatus(allowOrigin ? 204 : 403);
   }
 
   return next();

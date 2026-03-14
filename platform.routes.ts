@@ -249,7 +249,7 @@ router.post("/agents", async (req, res) => {
     ensName,
     initialScore = 25,
     strategy,
-    executionIntervalSeconds = 60,
+    executionIntervalSeconds = 150,
     riskTolerance = "balanced",
     profitTargetPct = 4,
     enabledTools,
