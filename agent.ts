@@ -7,6 +7,7 @@
 import axios from "axios";
 import { ethers } from "ethers";
 import * as blockchain from "./blockchain.service";
+import { ingestStrategyFromFileverseUrl } from "./tools/fileverse.tool";
 
 // @ts-ignore
 const logger = process.env.NODE_ENV === "test" ? console : require("./utils/logger");
@@ -52,9 +53,17 @@ async function httpPost(url: string, body: any) {
 let strategy: any = null;
 
 async function loadStrategy() {
-  logger.info(`[agent:${AGENT_ID}] loading strategy from Fileverse ${FILEVERSE_DOC}`);
-  const { data } = await httpGet(`/fileverse/docs/${FILEVERSE_DOC}`);
-  strategy = data;
+  if (FILEVERSE_DOC.startsWith("https://")) {
+    // Full Fileverse dDoc secure URL — fetch, decrypt, and parse entirely on this VM.
+    // The #key fragment is stripped from the URL, held in memory, and never transmitted.
+    logger.info(`[agent:${AGENT_ID}] loading strategy via Fileverse tool (encrypted dDoc)`);
+    strategy = await ingestStrategyFromFileverseUrl(FILEVERSE_DOC);
+  } else {
+    // Fallback: internal doc store (used when strategy was set via manual textarea).
+    logger.info(`[agent:${AGENT_ID}] loading strategy from internal store docId=${FILEVERSE_DOC}`);
+    const { data } = await httpGet(`/fileverse/docs/${FILEVERSE_DOC}`);
+    strategy = data;
+  }
   logger.info(`[agent:${AGENT_ID}] strategy loaded`, strategy);
 }
 

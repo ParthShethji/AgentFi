@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { TrendingUp, BarChart2, Check, ArrowLeft } from 'lucide-react';
+import { TrendingUp, BarChart2, Check, ArrowLeft, Link, FileText } from 'lucide-react';
 import AmbientBackground from '../components/AmbientBackground';
 import { useApp } from '../context/AppContext';
 import { useApi } from '../context/ApiContext';
@@ -47,6 +47,8 @@ export default function CreateAgentPage() {
   const [subdomainValid, setSubdomainValid] = useState<boolean | null>(null);
   const [role, setRole] = useState<Role>('Lender');
   const [strategy, setStrategy] = useState(LENDER_STRATEGY);
+  const [strategyMode, setStrategyMode] = useState<'write' | 'fileverse'>('write');
+  const [fileverseUrl, setFileverseUrl] = useState('');
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [creatingStep, setCreatingStep] = useState('');
@@ -104,15 +106,22 @@ export default function CreateAgentPage() {
     setCreating(true);
     try {
       const backendRole = role === 'Borrower' ? 'borrower' : 'lender';
-      const strategyObj = {
-        maxLoanAmount: 500,
-        minReputation: 25,
-        interestRate: 2.0,
-        tradeAllocation: { ETH: 60, stablecoin: 40 },
-        repayAfterSeconds: 30,
-        signals: [] as string[],
-        raw: strategy,
-      };
+      const strategyObj = strategyMode === 'fileverse'
+        ? {
+            // Backend will fetch + decrypt the dDoc and override all fields.
+            // We pass the URL inside the strategy object so it travels as a
+            // single request body field.
+            fileverseUrl: fileverseUrl.trim(),
+          }
+        : {
+            maxLoanAmount: 500,
+            minReputation: 25,
+            interestRate: 2.0,
+            tradeAllocation: { ETH: 60, stablecoin: 40 },
+            repayAfterSeconds: 30,
+            signals: [] as string[],
+            raw: strategy,
+          };
 
       // Step 1: Create agent on backend (generates wallet, registers on Base Sepolia)
       setCreatingStep('[1/2] Creating agent on Base Sepolia...');
@@ -326,26 +335,107 @@ export default function CreateAgentPage() {
                   <div style={{ marginTop: 8, fontFamily: 'Inter', fontSize: 13, color: 'var(--text-tertiary)' }}>
                     <span style={{ fontFamily: 'JetBrains Mono', color: 'var(--accent)' }}>{fullEnsName}</span> — {role}
                   </div>
-                  <div className="glass" style={{ marginTop: 24, padding: 20, borderRadius: 12 }}>
-                    <textarea
-                      className="textarea-field"
-                      value={strategy}
-                      onChange={e => setStrategy(e.target.value)}
-                      rows={10}
-                      style={{ height: 200, overflowY: 'auto', width: '100%' }}
-                      id="strategy-textarea"
-                    />
+
+                  {/* Mode toggle */}
+                  <div style={{ display: 'flex', gap: 0, marginTop: 20, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                    <button
+                      onClick={() => setStrategyMode('write')}
+                      style={{
+                        flex: 1, padding: '10px 0', border: 'none', cursor: 'pointer',
+                        background: strategyMode === 'write' ? 'var(--accent)' : 'transparent',
+                        color: strategyMode === 'write' ? '#030712' : 'var(--text-secondary)',
+                        fontFamily: 'Inter', fontSize: 13, fontWeight: 500,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                        transition: 'background 0.2s, color 0.2s',
+                      }}
+                      id="mode-write-btn"
+                    >
+                      <FileText size={13} /> Write Rules
+                    </button>
+                    <button
+                      onClick={() => setStrategyMode('fileverse')}
+                      style={{
+                        flex: 1, padding: '10px 0', border: 'none', cursor: 'pointer',
+                        borderLeft: '1px solid var(--border)',
+                        background: strategyMode === 'fileverse' ? 'var(--accent)' : 'transparent',
+                        color: strategyMode === 'fileverse' ? '#030712' : 'var(--text-secondary)',
+                        fontFamily: 'Inter', fontSize: 13, fontWeight: 500,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                        transition: 'background 0.2s, color 0.2s',
+                      }}
+                      id="mode-fileverse-btn"
+                    >
+                      <Link size={13} /> Link Fileverse dDoc
+                    </button>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
-                    <span>🔒</span>
-                    <span style={{ fontFamily: 'Inter', fontSize: 13, color: 'var(--text-secondary)' }}>
-                      Encrypted in your Fileverse vault. Only your agent can read this.
-                    </span>
-                  </div>
+
+                  {/* Write mode — existing textarea */}
+                  {strategyMode === 'write' && (
+                    <>
+                      <div className="glass" style={{ marginTop: 16, padding: 20, borderRadius: 12 }}>
+                        <textarea
+                          className="textarea-field"
+                          value={strategy}
+                          onChange={e => setStrategy(e.target.value)}
+                          rows={10}
+                          style={{ height: 200, overflowY: 'auto', width: '100%' }}
+                          id="strategy-textarea"
+                        />
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                        <span>🔒</span>
+                        <span style={{ fontFamily: 'Inter', fontSize: 13, color: 'var(--text-secondary)' }}>
+                          Encrypted in your Fileverse vault. Only your agent can read this.
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Fileverse mode — dDoc URL input */}
+                  {strategyMode === 'fileverse' && (
+                    <>
+                      <div className="glass" style={{ marginTop: 16, padding: 20, borderRadius: 12 }}>
+                        <div style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 10, lineHeight: 1.6 }}>
+                          Write your strategy at{' '}
+                          <a href="https://ddocs.new" target="_blank" rel="noopener noreferrer"
+                            style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                            ddocs.new
+                          </a>
+                          {' '}→ copy the encrypted URL from your browser address bar → paste it below.
+                        </div>
+                        <input
+                          className="input-field"
+                          value={fileverseUrl}
+                          onChange={e => setFileverseUrl(e.target.value.trim())}
+                          placeholder="https://docs.fileverse.io/0x…/42#key=…"
+                          style={{ fontFamily: 'JetBrains Mono', fontSize: 12, width: '100%', padding: '10px 0' }}
+                          id="fileverse-url-input"
+                        />
+                      </div>
+                      <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                          <span style={{ color: 'var(--success)', marginTop: 1 }}>🔐</span>
+                          <span style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                            The <code style={{ fontFamily: 'JetBrains Mono', color: 'var(--accent)' }}>#key</code> fragment
+                            in your URL is never sent to any server. The agent decrypts the document
+                            locally on the VM — the plaintext never leaves your infrastructure.
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span>🌐</span>
+                          <span style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)' }}>
+                            Encrypted payload fetched from Fileverse's decentralised storage (IPFS).
+                          </span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
                   <button
                     className="btn btn-primary glow-accent"
                     style={{ marginTop: 24, height: 52, padding: '0 32px' }}
                     onClick={advance}
+                    disabled={strategyMode === 'fileverse' && !fileverseUrl.startsWith('https://')}
                     id="rules-continue-btn"
                   >
                     Launch Agent →

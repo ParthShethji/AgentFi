@@ -4,8 +4,11 @@ import { ethers } from "ethers";
 import * as blockchain from "./blockchain.service";
 import { setAgentPrivateKey } from "./config/agentKeys";
 import { putStrategyDoc } from "./utils/strategyStore";
+import { ingestStrategyFromFileverseUrl } from "./tools/fileverse.tool";
 // @ts-ignore
 const db = require("./config/db");
+// @ts-ignore
+const logger = process.env.NODE_ENV === "test" ? console : require("./utils/logger");
 
 const router = Router();
 
@@ -93,7 +96,7 @@ router.post("/agents", async (req, res) => {
     username,
     ensName,
     initialScore = 25,
-    strategy = {
+    strategy: rawStrategy = {
       maxLoanAmount: 500,
       minReputation: 25,
       interestRate: 2.0,
@@ -113,6 +116,26 @@ router.post("/agents", async (req, res) => {
 
   if (!ensName.includes(".")) {
     return res.status(400).json({ error: "ensName must be a valid ENS name (e.g. alice.eth)" });
+  }
+
+  // If a Fileverse dDoc URL is supplied, validate and pre-ingest the strategy now
+  // so a bad URL or decryption failure is caught at creation time (fast-fail).
+  const fileverseUrl: string | undefined = rawStrategy?.fileverseUrl;
+  let strategy = rawStrategy;
+
+  if (fileverseUrl) {
+    if (!fileverseUrl.startsWith("https://")) {
+      return res.status(400).json({ error: "strategy.fileverseUrl must be a valid https:// Fileverse dDoc URL" });
+    }
+    try {
+      logger.info(`[platform/agents] pre-ingesting strategy from Fileverse URL for ensName=${ensName}`);
+      strategy = await ingestStrategyFromFileverseUrl(fileverseUrl);
+      logger.info(`[platform/agents] Fileverse strategy pre-ingested successfully`);
+    } catch (ingestErr: any) {
+      return res.status(422).json({
+        error: `Failed to load strategy from Fileverse URL: ${ingestErr.message}`,
+      });
+    }
   }
 
   try {
@@ -138,11 +161,14 @@ router.post("/agents", async (req, res) => {
     }
 
     const agentId = randomUUID();
-    const docId = `doc-${agentId}`;
+    // When a Fileverse URL is used, store it as the doc ID so the agent process
+    // can call ingestStrategyFromFileverseUrl directly at boot time.
+    const docId = fileverseUrl ? fileverseUrl : `doc-${agentId}`;
     const agentWallet = ethers.Wallet.createRandom();
 
     setAgentPrivateKey(agentWallet.address, agentWallet.privateKey);
-    putStrategyDoc(docId, strategy);
+    // Always store the resolved strategy in the internal store as a fallback.
+    putStrategyDoc(`doc-${agentId}`, strategy);
 
     const registerTx = await blockchain.registerAgent(agentWallet.address, Number(initialScore), ensName);
 

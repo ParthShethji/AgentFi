@@ -18,13 +18,27 @@ export interface CreateUserResponse {
   zkVerified: boolean;
 }
 
+export interface CreateAgentStrategy {
+  maxLoanAmount?: number;
+  minReputation?: number;
+  interestRate?: number;
+  tradeAllocation?: { ETH: number; stablecoin: number };
+  repayAfterSeconds?: number;
+  signals?: string[];
+  raw?: string;
+  /** Fileverse dDoc secure URL. When provided, the backend fetches and decrypts
+   *  the strategy document from Fileverse's decentralised storage. */
+  fileverseUrl?: string;
+  [key: string]: unknown;
+}
+
 export interface CreateAgentPayload {
   userId: string;
   role: "lender" | "borrower";
   username?: string;
   ensName: string;
   initialScore?: number;
-  strategy?: Record<string, unknown>;
+  strategy?: CreateAgentStrategy;
 }
 
 export interface CreateAgentResponse {
