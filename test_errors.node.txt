@@ -1,0 +1,157 @@
+﻿
+> agentfi-lending@1.0.0 test:backend
+> jest
+
+node.exe : FAIL test/schema.test.ts
+At line:1 char:1
++ & "C:\nvm4w\nodejs/node.exe" "C:\nvm4w\nodejs/node_modules/npm/bin/np ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (FAIL test/schema.test.ts:String) [], RemoteExcepti 
+   on
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  ΓùÅ Test suite failed to run
+
+    Cannot find module 'pg-mem' from 'test/schema.test.ts'
+
+    [0m [90m 1 |[39m [90m// @ts-ignore[39m
+    [31m[1m>[22m[39m[90m 2 |[39m [36mimport[39m { newDb } [36mfrom[39m 
+[32m'pg-mem'[39m[33m;[39m
+     [90m   |[39m [31m[1m^[22m[39m
+     [90m 3 |[39m [36mimport[39m [33m*[39m [36mas[39m fs [36mfrom[39m 
+[32m'fs'[39m[33m;[39m
+     [90m 4 |[39m
+     [90m 5 |[39m describe([32m'AgentFi Schema'[39m[33m,[39m () [33m=>[39m {[0m
+
+      at Resolver._throwModNotFoundError (node_modules/jest-resolve/build/resolver.js:427:11)
+      at Object.<anonymous> (test/schema.test.ts:2:1)
+
+PASS test/lending.service.test.ts
+FAIL test/agent.test.ts
+  ΓùÅ Agent Process ΓÇ║ Lender role should boot, load strategy, and post offer
+
+    Cannot find module '../agent.js' from 'test/agent.test.ts'
+
+    [0m [90m 59 |[39m     
+     [90m 60 |[39m     jest[33m.[39misolateModules(() [33m=>[39m {
+    [31m[1m>[22m[39m[90m 61 |[39m       require([32m"../agent.js"[39m)[33m;[39m
+     [90m    |[39m       [31m[1m^[22m[39m
+     [90m 62 |[39m     })[33m;[39m
+     [90m 63 |[39m     
+     [90m 64 |[39m     [90m// Allow promises to resolve[39m[0m
+
+      at Resolver._throwModNotFoundError (node_modules/jest-resolve/build/resolver.js:427:11)
+      at test/agent.test.ts:61:7
+      at Object.<anonymous> (test/agent.test.ts:60:10)
+
+  ΓùÅ Agent Process ΓÇ║ Borrower role should get a quote, request borrow, hold, unwind, and 
+repay
+
+    Cannot find module '../agent.js' from 'test/agent.test.ts'
+
+    [0m [90m 115 |[39m     
+     [90m 116 |[39m     jest[33m.[39misolateModules(() [33m=>[39m {
+    [31m[1m>[22m[39m[90m 117 |[39m       require([32m"../agent.js"[39m)[33m;[39m
+     [90m     |[39m       [31m[1m^[22m[39m
+     [90m 118 |[39m     })[33m;[39m
+     [90m 119 |[39m     
+     [90m 120 |[39m     [90m// Let all the promises chain settle[39m[0m
+
+      at Resolver._throwModNotFoundError (node_modules/jest-resolve/build/resolver.js:427:11)
+      at test/agent.test.ts:117:7
+      at Object.<anonymous> (test/agent.test.ts:116:10)
+
+FAIL test/lending.routes.test.ts
+  ΓùÅ Test suite failed to run
+
+    Cannot find module 'express' from 'test/lending.routes.test.ts'
+
+    [0m [90m 1 |[39m [36mimport[39m request [36mfrom[39m [32m"supertest"[39m[33m;[39m
+    [31m[1m>[22m[39m[90m 2 |[39m [36mimport[39m express [36mfrom[39m 
+[32m"express"[39m[33m;[39m
+     [90m   |[39m [31m[1m^[22m[39m
+     [90m 3 |[39m [36mimport[39m [33m*[39m [36mas[39m lendingRoutes [36mfrom[39m 
+[32m"../lending.routes"[39m[33m;[39m
+     [90m 4 |[39m [36mimport[39m [33m*[39m [36mas[39m lendingService [36mfrom[39m 
+[32m"../lending.service"[39m[33m;[39m
+     [90m 5 |[39m [36mimport[39m [33m*[39m [36mas[39m blockchainService [36mfrom[39m 
+[32m"../blockchain.service"[39m[33m;[39m[0m
+
+      at Resolver._throwModNotFoundError (node_modules/jest-resolve/build/resolver.js:427:11)
+      at Object.<anonymous> (test/lending.routes.test.ts:2:1)
+
+FAIL test/blockchain.service.test.ts
+  ΓùÅ Blockchain Service ΓÇ║ should get agent rep
+
+    TypeError: contract.getAgentRep is not a function
+
+    [0m [90m 69 |[39m
+     [90m 70 |[39m [36mexport[39m [36masync[39m [36mfunction[39m 
+getAgentRep(agentWallet[33m:[39m string) {
+    [31m[1m>[22m[39m[90m 71 |[39m   [36mconst[39m rep [33m=[39m [36mawait[39m 
+contract[33m.[39mgetAgentRep(agentWallet)[33m;[39m
+     [90m    |[39m                              [31m[1m^[22m[39m
+     [90m 72 |[39m   [36mreturn[39m {
+     [90m 73 |[39m     score[33m:[39m [33mNumber[39m(rep[33m.[39mscore)[33m,[39m
+     [90m 74 |[39m     lastActivityAt[33m:[39m 
+[33mNumber[39m(rep[33m.[39mlastActivityAt)[33m,[39m[0m
+
+      at Object.getAgentRep (blockchain.service.ts:71:30)
+      at Object.<anonymous> (test/blockchain.service.test.ts:56:43)
+
+  ΓùÅ Blockchain Service ΓÇ║ should request loan successfully
+
+    TypeError: Cannot read properties of undefined (reading 'results')
+
+    [0m [90m 60 |[39m   it([32m"should request loan successfully"[39m[33m,[39m 
+[36masync[39m () [33m=>[39m {
+     [90m 61 |[39m     [90m// Override the mock implementation just for 
+getTransactionReceipt handling[39m
+    [31m[1m>[22m[39m[90m 62 |[39m     [36mconst[39m providerMock [33m=[39m 
+(ethers[33m.[39m[33mJsonRpcProvider[39m [36mas[39m jest[33m.[39m[33mMock[39m)[33m.[3
+9mmock[33m.[39mresults[[35m0[39m][33m.[39mvalue[33m;[39m
+     [90m    |[39m                                                                     
+[31m[1m^[22m[39m
+     [90m 63 |[39m     providerMock[33m.[39mgetTransactionReceipt [33m=[39m 
+jest[33m.[39mfn()[33m.[39mmockResolvedValue({
+     [90m 64 |[39m       logs[33m:[39m [{ topics[33m:[39m [[32m"0xTopic"[39m] }]
+     [90m 65 |[39m     })[33m;[39m[0m
+
+      at Object.<anonymous> (test/blockchain.service.test.ts:62:69)
+
+  ΓùÅ Blockchain Service ΓÇ║ should fail to request loan if allowance insufficient
+
+    TypeError: Cannot read properties of undefined (reading 'results')
+
+    [0m [90m 81 |[39m   it([32m"should fail to request loan if allowance 
+insufficient"[39m[33m,[39m [36masync[39m () [33m=>[39m {
+     [90m 82 |[39m     [90m// Override the token contract allowance to be 0[39m
+    [31m[1m>[22m[39m[90m 83 |[39m     [36mconst[39m usdcMock [33m=[39m 
+(ethers[33m.[39m[33mContract[39m [36mas[39m jest[33m.[39m[33mMock[39m)[33m.[39mmock
+[33m.[39mresults[[35m1[39m][33m.[39mvalue[33m;[39m
+     [90m    |[39m                                                          
+[31m[1m^[22m[39m
+     [90m 84 |[39m     
+usdcMock[33m.[39mallowance[33m.[39mmockResolvedValueOnce([35m0[39mn)[33m;[39m [90m// 
+borrower allowance is 0[39m
+     [90m 85 |[39m
+     [90m 86 |[39m     [36mawait[39m expect((blockchain [36mas[39m 
+any)[33m.[39mrequestLoan({[0m
+
+      at Object.<anonymous> (test/blockchain.service.test.ts:83:58)
+
+-----------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------------------------------
+File                   | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s                                                                                                                   
+-----------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------------------------------
+All files              |   21.92 |    15.17 |   14.28 |   22.87 |                                                                                                                                     
+ agent.ts              |       0 |        0 |       0 |       0 | 7-188                                                                                                                               
+ blockchain.service.ts |   29.41 |    37.03 |       4 |    30.3 | 38,42-51,61-62,72,82-86,90-91,95-96,100-101,121-171,175-176,180-194,201-202,206,210,214-215,229-230,234-235,239-240,252-253,262-263 
+ lending.routes.ts     |       0 |        0 |       0 |       0 | 7-229                                                                                                                               
+ lending.service.ts    |   43.25 |    23.33 |   43.47 |   46.01 | 83,99-110,128-146,150-163,177,182-190,197-211,229-234,281-307,311-326,332-347,353-370,378-383                                       
+ scheduler.ts          |       0 |        0 |       0 |       0 | 8-50                                                                                                                                
+-----------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------------------------------
+Test Suites: 4 failed, 1 passed, 5 total
+Tests:       5 failed, 6 passed, 11 total
+Snapshots:   0 total
+Time:        7.475 s
+Ran all test suites.
