@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Vault, FileText, Zap } from 'lucide-react';
 import ThreeGlobe from '../components/Globe';
@@ -38,7 +39,11 @@ const STEPS = [
 const tickerContent = [...TICKER_ITEMS, ...TICKER_ITEMS, ...TICKER_ITEMS];
 
 export default function LandingPage() {
-  const { setCurrentView } = useApp();
+  const navigate = useNavigate();
+  const { zkVerified, verifiedEnsName, userId } = useApp();
+  const isVerified = zkVerified && !!verifiedEnsName && !!userId;
+  const ctaRoute = isVerified ? '/create-agent' : '/onboarding';
+  const ctaLabel = isVerified ? 'Create Agent →' : 'Launch Your Agent →';
   const [heroLoaded, setHeroLoaded] = useState(false);
 
   useEffect(() => {
@@ -106,10 +111,10 @@ export default function LandingPage() {
           <div style={{ display: 'flex', gap: 12, marginTop: 40, width: '100%', justifyContent: 'center' }}>
             <button
               className="btn btn-primary glow-accent"
-              onClick={() => setCurrentView('onboarding')}
+              onClick={() => navigate(ctaRoute)}
               id="launch-agent-btn"
             >
-              Launch Your Agent →
+              {ctaLabel}
             </button>
             <button
               className="btn btn-ghost"
@@ -293,10 +298,10 @@ export default function LandingPage() {
             <button
               className="btn btn-primary glow-accent"
               style={{ height: 56, padding: '0 48px', fontSize: 16 }}
-              onClick={() => setCurrentView('onboarding')}
+              onClick={() => navigate(ctaRoute)}
               id="footer-launch-btn"
             >
-              Launch Your Agent →
+              {ctaLabel}
             </button>
           </motion.div>
         </div>

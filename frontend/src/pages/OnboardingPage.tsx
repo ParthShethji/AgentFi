@@ -51,12 +51,12 @@ export default function OnboardingPage() {
     }
   }, [searchParams, setStep]);
 
-  // If already fully verified, redirect to create-agent
+  // If wallet is connected and already fully verified, redirect to create-agent (avoid loop when wallet was cleared on load)
   useEffect(() => {
-    if (zkVerified && verifiedEnsName && userId) {
+    if (walletAddress && zkVerified && verifiedEnsName && userId) {
       navigate('/create-agent', { replace: true });
     }
-  }, [zkVerified, verifiedEnsName, userId, navigate]);
+  }, [walletAddress, zkVerified, verifiedEnsName, userId, navigate]);
 
   // Debounced ENS format validation
   useEffect(() => {
