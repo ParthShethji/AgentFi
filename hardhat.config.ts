@@ -4,7 +4,8 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const deployerKey = process.env.DEPLOYER_PRIVATE_KEY || "";
+// Primary deploy key: prefer DEPLOYER_PRIVATE_KEY, fall back to PLATFORM_PRIVATE_KEY
+const deployerKey = process.env.DEPLOYER_PRIVATE_KEY || process.env.PLATFORM_PRIVATE_KEY || "";
 const platformKey = process.env.PLATFORM_PRIVATE_KEY || "";
 
 const config: HardhatUserConfig = {
@@ -19,9 +20,14 @@ const config: HardhatUserConfig = {
       accounts: deployerKey && platformKey ? [deployerKey, platformKey] : undefined,
     },
     baseSepolia: {
-      url: process.env.RPC_URL || "",
+      url: process.env.BASE_SEPOLIA_RPC_URL || process.env.RPC_URL || "",
       chainId: 84532,
-      accounts: deployerKey ? [deployerKey] : [],
+      // Deploy script uses [0]=deployer [1]=platformSigner — both keys required
+      accounts: deployerKey && platformKey && deployerKey !== platformKey
+        ? [deployerKey, platformKey]
+        : deployerKey
+        ? [deployerKey]
+        : [],
     }
   }
 };

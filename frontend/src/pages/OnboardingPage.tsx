@@ -41,6 +41,8 @@ export default function OnboardingPage() {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+  // 🐛 DEBUG: raw address returned by ENS resolver
+  const [ensResolvedAddress, setEnsResolvedAddress] = useState<string | null>(null);
 
   // When arriving from create-agent with ?step=0|1|2, open that onboarding step
   useEffect(() => {
@@ -91,6 +93,7 @@ export default function OnboardingPage() {
 
   const handleVerifyOwnership = async () => {
     setEnsOwnershipError(null);
+    setEnsResolvedAddress(null);
     if (!walletAddress) {
       setEnsOwnershipError('The ENS name does not belong to the user.');
       return;
@@ -98,6 +101,9 @@ export default function OnboardingPage() {
     setEnsVerifying(true);
     try {
       const { address } = await resolveEns(baseUrl, ensName);
+      // 🐛 DEBUG: store raw resolved address for display
+      setEnsResolvedAddress(address);
+      console.debug('[ENS DEBUG] resolveEns result:', { ensName, address, walletAddress });
       if (address == null || address.toLowerCase() !== walletAddress.toLowerCase()) {
         setEnsOwnershipError('The ENS name does not belong to the user.');
         return;
@@ -105,7 +111,8 @@ export default function OnboardingPage() {
       setEnsOwnershipChecked(true);
       setVerifiedEnsName(ensName);
       setTimeout(advance, 600);
-    } catch {
+    } catch (err) {
+      console.debug('[ENS DEBUG] resolveEns threw:', err);
       setEnsOwnershipError('The ENS name does not belong to the user.');
     } finally {
       setEnsVerifying(false);
@@ -299,6 +306,31 @@ export default function OnboardingPage() {
                     {walletAddress && (
                       <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, fontFamily: 'JetBrains Mono', fontSize: 12, color: 'var(--text-tertiary)' }}>
                         Connected: {walletAddress}
+                      </div>
+                    )}
+
+                    {/* 🐛 DEBUG PANEL — remove before prod */}
+                    {ensResolvedAddress !== null && (
+                      <div style={{
+                        marginTop: 10,
+                        padding: '10px 14px',
+                        background: 'rgba(251,191,36,0.07)',
+                        border: '1px solid rgba(251,191,36,0.25)',
+                        borderRadius: 8,
+                        fontFamily: 'JetBrains Mono',
+                        fontSize: 11,
+                        lineHeight: 1.7,
+                      }}>
+                        <div style={{ color: 'rgba(251,191,36,0.7)', letterSpacing: '0.08em', marginBottom: 4 }}>🐛 ENS DEBUG</div>
+                        <div><span style={{ color: 'var(--text-tertiary)' }}>name&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ </span><span style={{ color: '#fbbf24' }}>{ensName}</span></div>
+                        <div><span style={{ color: 'var(--text-tertiary)' }}>resolved → </span><span style={{ color: ensResolvedAddress ? '#4ade80' : '#f87171' }}>{ensResolvedAddress ?? 'null (not found)'}</span></div>
+                        <div><span style={{ color: 'var(--text-tertiary)' }}>wallet&nbsp;&nbsp; → </span><span style={{ color: 'var(--text-secondary)' }}>{walletAddress}</span></div>
+                        <div style={{ marginTop: 4 }}>
+                          <span style={{ color: 'var(--text-tertiary)' }}>match&nbsp;&nbsp;&nbsp; → </span>
+                          <span style={{ color: ensResolvedAddress?.toLowerCase() === walletAddress?.toLowerCase() ? '#4ade80' : '#f87171', fontWeight: 600 }}>
+                            {ensResolvedAddress?.toLowerCase() === walletAddress?.toLowerCase() ? '✅ YES' : '❌ NO'}
+                          </span>
+                        </div>
                       </div>
                     )}
                   </div>

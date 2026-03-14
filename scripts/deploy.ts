@@ -3,7 +3,10 @@ import fs from "fs";
 import path from "path";
 
 async function main() {
-  const [deployer, platformSigner] = await ethers.getSigners();
+  const signers = await ethers.getSigners();
+  const deployer = signers[0];
+  // If only one key provided (no DEPLOYER_PRIVATE_KEY), reuse deployer as platformSigner
+  const platformSigner = signers.length > 1 ? signers[1] : signers[0];
   console.log(`[deploy] network=${network.name}`);
   console.log(`[deploy] deployer=${deployer.address}`);
   console.log(`[deploy] platformSigner=${platformSigner.address}`);

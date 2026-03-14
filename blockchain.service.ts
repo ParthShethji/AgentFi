@@ -13,20 +13,25 @@ function loadAbi() {
     return [];
   }
 
+  const path = require("path");
   const candidates = [
-    "./contracts/AgentFiLending.abi.json",
-    "./artifacts/contracts/AgentFiLending.sol/AgentFiLending.json",
+    path.resolve(__dirname, "./contracts/AgentFiLending.abi.json"),
+    path.resolve(__dirname, "./artifacts/contracts/AgentFiLending.sol/AgentFiLending.json"),
   ];
 
-  for (const path of candidates) {
+  for (const candidate of candidates) {
     try {
-      const abiJson = require(path);
-      return Array.isArray(abiJson) ? abiJson : abiJson.abi || [];
+      const abiJson = require(candidate);
+      const abi = Array.isArray(abiJson) ? abiJson : abiJson.abi || [];
+      console.log(`[blockchain] ABI loaded from: ${candidate} (${abi.length} entries)`);
+      return abi;
     } catch {
+      console.warn(`[blockchain] ABI not found at: ${candidate}`);
       continue;
     }
   }
 
+  console.error("[blockchain] CRITICAL: No ABI file found — all contract calls will fail with 'no matching fragment'.");
   return [];
 }
 
@@ -35,7 +40,14 @@ const logger = process.env.NODE_ENV === "test" ? console : require("./utils/logg
 
 // ─── Provider + Signer setup ──────────────────────────────────────────────────
 
-const provider = new JsonRpcProvider(process.env.RPC_URL || ""); // Base Sepolia
+// Base Sepolia — lending contract, USDC, gas funding
+const provider = new JsonRpcProvider(process.env.BASE_SEPOLIA_RPC_URL || process.env.RPC_URL || "");
+
+// Ethereum Sepolia (L1) — ENS only. ENS names live on L1, not on Base.
+// Falls back to provider if L1_SEPOLIA_RPC_URL is not set (local dev).
+const l1Provider = process.env.L1_SEPOLIA_RPC_URL
+  ? new JsonRpcProvider(process.env.L1_SEPOLIA_RPC_URL)
+  : provider;
 
 const platformWallet = new Wallet(process.env.PLATFORM_PRIVATE_KEY || "0x0123456789012345678901234567890123456789012345678901234567890123", provider);
 
@@ -489,7 +501,8 @@ export async function resolveEnsToAddress(ensName: string): Promise<string | nul
     logger.warn(`[ens] ENS_RESOLVER_ADDRESS not set – skipping forward resolution for ${ensName}`);
     return null;
   }
-  const resolver = new ethers.Contract(resolverAddress, ENS_RESOLVER_ABI, provider);
+  // Use l1Provider: ENS names from sepolia.primary.ens.domains live on Ethereum Sepolia, not Base Sepolia
+  const resolver = new ethers.Contract(resolverAddress, ENS_RESOLVER_ABI, l1Provider);
   const node = ensNamehash(ensName);
   const addr = await resolver.addr(node);
   return addr as string;
@@ -507,7 +520,8 @@ export async function resolveAddressToEns(wallet: string): Promise<string | null
     return null;
   }
   try {
-    const ensName = await provider.lookupAddress(wallet);
+    // Use l1Provider: reverse ENS registry (addr.reverse) lives on Ethereum Sepolia
+    const ensName = await l1Provider.lookupAddress(wallet);
     return ensName;
   } catch {
     return null;
@@ -524,7 +538,8 @@ export async function getEnsTextRecord(ensName: string, key: string): Promise<st
     logger.warn(`[ens] ENS_RESOLVER_ADDRESS not set – skipping text record fetch for ${ensName}`);
     return null;
   }
-  const resolver = new ethers.Contract(resolverAddress, ENS_RESOLVER_ABI, provider);
+  // Use l1Provider: text records are stored on the Ethereum Sepolia resolver
+  const resolver = new ethers.Contract(resolverAddress, ENS_RESOLVER_ABI, l1Provider);
   const node = ensNamehash(ensName);
   const value = await resolver.text(node, key);
   return value as string;
