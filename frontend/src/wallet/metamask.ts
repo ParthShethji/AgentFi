@@ -1,3 +1,5 @@
+import { BrowserProvider, Contract, parseEther, parseUnits } from "ethers";
+
 export type EthereumProvider = {
   request: (args: { method: string; params?: unknown[] | Record<string, unknown> }) => Promise<unknown>;
   on?: (event: string, handler: (...args: any[]) => void) => void;
@@ -31,6 +33,55 @@ export async function getCurrentAccount(): Promise<{ address: string; chainId: s
 
   const chainId = (await ethereum.request({ method: "eth_chainId" })) as string;
   return { address, chainId };
+}
+
+export async function signMessage(message: string, address: string) {
+  const ethereum = getEthereumProvider();
+  if (!ethereum) throw new Error("MetaMask not detected");
+  const signature = (await ethereum.request({
+    method: "personal_sign",
+    params: [message, address],
+  })) as string;
+  return signature;
+}
+
+export function getChainLabel(chainId?: string | null) {
+  if (!chainId) return "Unknown network";
+  const normalized = chainId.toLowerCase();
+  if (normalized === "0x7a69" || normalized === "0x539") return "Local Hardhat";
+  if (normalized === "0xaa36a7") return "Ethereum Sepolia";
+  if (normalized === "0x14a34") return "Base Sepolia";
+  if (normalized === "0x1") return "Ethereum Mainnet";
+  return `Chain ${chainId}`;
+}
+
+async function getBrowserSigner() {
+  const ethereum = getEthereumProvider();
+  if (!ethereum) throw new Error("MetaMask not detected");
+  const provider = new BrowserProvider(ethereum as any);
+  return provider.getSigner();
+}
+
+export async function sendEthToAgent(to: string, amountEth: string) {
+  const signer = await getBrowserSigner();
+  const tx = await signer.sendTransaction({
+    to,
+    value: parseEther(amountEth),
+  });
+  await tx.wait();
+  return tx.hash;
+}
+
+const ERC20_ABI = [
+  "function transfer(address to, uint256 value) returns (bool)",
+];
+
+export async function sendUsdcToAgent(usdcAddress: string, to: string, amountUsdc: string) {
+  const signer = await getBrowserSigner();
+  const token = new Contract(usdcAddress, ERC20_ABI, signer);
+  const tx = await token.transfer(to, parseUnits(amountUsdc, 6));
+  await tx.wait();
+  return tx.hash;
 }
 
 export function formatAddress(addr: string, chars = 4) {

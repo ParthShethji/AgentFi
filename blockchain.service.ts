@@ -6,7 +6,7 @@
  */
 
 import { ethers, Contract, JsonRpcProvider, Wallet } from "ethers";
-import { getAgentPrivateKey } from "./config/agentKeys";
+import { getAgentPrivateKey, loadAgentPrivateKey } from "./config/agentKeys";
 
 function loadAbi() {
   if (process.env.NODE_ENV === "test") {
@@ -232,6 +232,25 @@ export async function checkBalance(walletAddress: string) {
   return fromUsdc(balance);
 }
 
+export async function getEthBalance(walletAddress: string) {
+  const balance = await provider.getBalance(walletAddress);
+  return Number(ethers.formatEther(balance));
+}
+
+export async function getWalletFundingSnapshot(walletAddress: string) {
+  const [ethBalance, usdcBalance] = await Promise.all([
+    getEthBalance(walletAddress),
+    checkBalance(walletAddress),
+  ]);
+
+  return {
+    ethBalance,
+    usdcBalance,
+    usdcAddress: process.env.USDC_ADDRESS || null,
+    contractAddress: process.env.CONTRACT_ADDRESS || null,
+  };
+}
+
 /**
  * Mint MockERC20 USDC to a wallet address.
  * Only works when platformWallet is the MockERC20 owner (deployer account).
@@ -374,7 +393,8 @@ export async function repayLoan(loanId: number, borrowerWallet: string, profitGe
   const privateKey =
     process.env[`AGENT_KEY_${borrowerWallet.toLowerCase()}`] ||
     process.env.AGENT_PRIVATE_KEY ||
-    getAgentPrivateKey(borrowerWallet);
+    getAgentPrivateKey(borrowerWallet) ||
+    await loadAgentPrivateKey(borrowerWallet);
 
   if (!privateKey) {
     throw new Error(`Borrower private key not found for wallet ${borrowerWallet}`);

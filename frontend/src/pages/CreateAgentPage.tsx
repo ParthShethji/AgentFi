@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { TrendingUp, BarChart2, Check, ArrowLeft } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import AmbientBackground from '../components/AmbientBackground';
 import { useApp } from '../context/AppContext';
 import { useApi } from '../context/ApiContext';
@@ -47,9 +48,17 @@ export default function CreateAgentPage() {
   const [subdomainValid, setSubdomainValid] = useState<boolean | null>(null);
   const [role, setRole] = useState<Role>('Lender');
   const [strategy, setStrategy] = useState(LENDER_STRATEGY);
+  const [riskTolerance, setRiskTolerance] = useState<'conservative' | 'balanced' | 'aggressive'>('balanced');
+  const [profitTargetPct, setProfitTargetPct] = useState(4);
+  const [executionIntervalSeconds, setExecutionIntervalSeconds] = useState(60);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [creatingStep, setCreatingStep] = useState('');
+
+  const { data: toolsData } = useQuery({
+    queryKey: ['platformTools'],
+    queryFn: () => api.getTools(),
+  });
 
   // Guard: redirect to connect wallet (step 0) if not connected, or to verification (step 1/2) if not verified
   useEffect(() => {
@@ -122,6 +131,17 @@ export default function CreateAgentPage() {
         ensName: fullEnsName,
         initialScore: 25,
         strategy: strategyObj,
+        executionIntervalSeconds,
+        riskTolerance,
+        profitTargetPct,
+        enabledTools: (toolsData?.tools || [])
+          .filter((tool) => {
+            const name = String(tool.name || '');
+            return backendRole === 'lender'
+              ? ['fetch_open_offers', 'post_lend_offer', 'get_agent_reputation'].includes(name)
+              : ['fetch_open_offers', 'get_borrow_quote', 'request_borrow', 'repay_loan', 'get_agent_reputation'].includes(name);
+          })
+          .map((tool) => String(tool.name)),
       });
 
       // Step 2: Create ENS subdomain on Ethereum Sepolia via MetaMask
@@ -335,6 +355,52 @@ export default function CreateAgentPage() {
                       style={{ height: 200, overflowY: 'auto', width: '100%' }}
                       id="strategy-textarea"
                     />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12, marginTop: 16 }}>
+                    <label className="glass" style={{ padding: 14, borderRadius: 12 }}>
+                      <div className="label-ui" style={{ marginBottom: 8 }}>Risk</div>
+                      <select
+                        value={riskTolerance}
+                        onChange={(e) => setRiskTolerance(e.target.value as 'conservative' | 'balanced' | 'aggressive')}
+                        style={{ width: '100%', background: 'transparent', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}
+                      >
+                        <option value="conservative">Conservative</option>
+                        <option value="balanced">Balanced</option>
+                        <option value="aggressive">Aggressive</option>
+                      </select>
+                    </label>
+                    <label className="glass" style={{ padding: 14, borderRadius: 12 }}>
+                      <div className="label-ui" style={{ marginBottom: 8 }}>Profit Target</div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={profitTargetPct}
+                        onChange={(e) => setProfitTargetPct(Number(e.target.value))}
+                        style={{ width: '100%', background: 'transparent', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}
+                      />
+                    </label>
+                    <label className="glass" style={{ padding: 14, borderRadius: 12 }}>
+                      <div className="label-ui" style={{ marginBottom: 8 }}>Interval (s)</div>
+                      <input
+                        type="number"
+                        min={10}
+                        max={3600}
+                        value={executionIntervalSeconds}
+                        onChange={(e) => setExecutionIntervalSeconds(Number(e.target.value))}
+                        style={{ width: '100%', background: 'transparent', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}
+                      />
+                    </label>
+                  </div>
+                  <div className="glass" style={{ marginTop: 12, padding: '14px 16px', borderRadius: 12 }}>
+                    <div className="label-ui" style={{ marginBottom: 8 }}>Enabled Tools</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {(toolsData?.tools || []).map((tool) => (
+                        <span key={String(tool.name)} className="badge badge-active" style={{ fontSize: 10 }}>
+                          {String(tool.name)}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
                     <span>🔒</span>

@@ -3,6 +3,11 @@ import type {
   CreateUserResponse,
   CreateAgentPayload,
   CreateAgentResponse,
+  SessionResponse,
+  UserAgent,
+  FundAgentPayload,
+  AgentRuntimeResponse,
+  AdminOverviewResponse,
   GetOffersResponse,
   PostOfferPayload,
   PostOfferResponse,
@@ -15,12 +20,20 @@ import type {
   AgentRep,
 } from "./types/api";
 
-type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
+type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export type ApiClient = {
   createUser(payload: CreateUserPayload): Promise<CreateUserResponse>;
+  getSession(walletAddress: string): Promise<SessionResponse>;
   createAgent(payload: CreateAgentPayload): Promise<CreateAgentResponse>;
   updateAgentStrategy(agentId: string, strategy: Record<string, unknown>): Promise<unknown>;
+  getUserAgents(userId: string): Promise<{ agents: UserAgent[] }>;
+  getAgentRuntime(agentId: string): Promise<AgentRuntimeResponse>;
+  runAgent(agentId: string): Promise<{ agentId: string; triggered: boolean }>;
+  updateAgentStatus(agentId: string, runtimeStatus: "active" | "paused" | "stopped"): Promise<{ agentId: string; runtimeStatus: string }>;
+  fundAgent(agentId: string, payload: FundAgentPayload): Promise<{ agentId: string; funded: boolean }>;
+  getAdminOverview(): Promise<AdminOverviewResponse>;
+  getTools(): Promise<{ tools: Array<Record<string, unknown>> }>;
   getOffers(minRep: number, maxAmount: number): Promise<GetOffersResponse>;
   postOffer(payload: PostOfferPayload): Promise<PostOfferResponse>;
   deleteOffer(offerId: number, lenderAgentId: string): Promise<{ message: string }>;
@@ -69,11 +82,52 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     createUser(payload) {
       return callApi<CreateUserResponse>(baseUrl, token, "POST", "/platform/users", payload);
     },
+    getSession(walletAddress) {
+      return callApi<SessionResponse>(
+        baseUrl,
+        token,
+        "GET",
+        `/platform/session?walletAddress=${encodeURIComponent(walletAddress)}`
+      );
+    },
     createAgent(payload) {
       return callApi<CreateAgentResponse>(baseUrl, token, "POST", "/platform/agents", payload);
     },
     updateAgentStrategy(agentId, strategy) {
       return callApi(baseUrl, token, "PUT", `/platform/agents/${encodeURIComponent(agentId)}/strategy`, strategy);
+    },
+    getUserAgents(userId) {
+      return callApi<{ agents: UserAgent[] }>(baseUrl, token, "GET", `/platform/users/${encodeURIComponent(userId)}/agents`);
+    },
+    getAgentRuntime(agentId) {
+      return callApi<AgentRuntimeResponse>(baseUrl, token, "GET", `/platform/agents/${encodeURIComponent(agentId)}/runtime`);
+    },
+    runAgent(agentId) {
+      return callApi<{ agentId: string; triggered: boolean }>(baseUrl, token, "POST", `/platform/agents/${encodeURIComponent(agentId)}/run`);
+    },
+    updateAgentStatus(agentId, runtimeStatus) {
+      return callApi<{ agentId: string; runtimeStatus: string }>(
+        baseUrl,
+        token,
+        "PATCH",
+        `/platform/agents/${encodeURIComponent(agentId)}/status`,
+        { runtimeStatus }
+      );
+    },
+    fundAgent(agentId, payload) {
+      return callApi<{ agentId: string; funded: boolean }>(
+        baseUrl,
+        token,
+        "POST",
+        `/platform/agents/${encodeURIComponent(agentId)}/fund`,
+        payload
+      );
+    },
+    getAdminOverview() {
+      return callApi<AdminOverviewResponse>(baseUrl, token, "GET", "/platform/admin/overview");
+    },
+    getTools() {
+      return callApi<{ tools: Array<Record<string, unknown>> }>(baseUrl, token, "GET", "/platform/tools");
     },
     getOffers(minRep, maxAmount) {
       return callApi<GetOffersResponse>(baseUrl, token, "GET", `/lending/offers?minRep=${minRep}&maxAmount=${maxAmount}`);

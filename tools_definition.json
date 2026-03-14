@@ -1,0 +1,227 @@
+[
+  {
+    "name": "create_user",
+    "description": "Register a new user with an email and wallet address. Performs ZK human verification mock.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "User's email address"
+        },
+        "walletAddress": {
+          "type": "string",
+          "description": "User's primary wallet address (optional, will be generated if not provided)"
+        },
+        "zkProofData": {
+          "type": "string",
+          "description": "Mock ZK proof data for human verification"
+        }
+      },
+      "required": [
+        "email"
+      ]
+    },
+    "method": "POST",
+    "path": "/platform/users"
+  },
+  {
+    "name": "create_agent",
+    "description": "Create a new AI agent (lender or borrower) for a ZK-verified user.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The ID of the registered user"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "lender",
+            "borrower"
+          ],
+          "description": "The role of the agent"
+        },
+        "ensName": {
+          "type": "string",
+          "description": "Target ENS name for the agent (must be valid ENS)"
+        },
+        "strategy": {
+          "type": "object",
+          "properties": {
+            "maxLoanAmount": {
+              "type": "number",
+              "default": 500
+            },
+            "minReputation": {
+              "type": "number",
+              "default": 25
+            },
+            "interestRate": {
+              "type": "number",
+              "default": 2.0
+            },
+            "repayAfterSeconds": {
+              "type": "number",
+              "default": 30
+            }
+          }
+        }
+      },
+      "required": [
+        "userId",
+        "role",
+        "ensName"
+      ]
+    },
+    "method": "POST",
+    "path": "/platform/agents"
+  },
+  {
+    "name": "post_lend_offer",
+    "description": "Lender agent posts an offer to the lending marketplace.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "lenderAgentId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "maxAmountUsdc": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 1000
+        },
+        "minRepRequired": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 50
+        },
+        "ratePct": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 10
+        }
+      },
+      "required": [
+        "lenderAgentId",
+        "maxAmountUsdc",
+        "minRepRequired",
+        "ratePct"
+      ]
+    },
+    "method": "POST",
+    "path": "/lending/offers"
+  },
+  {
+    "name": "request_borrow",
+    "description": "Borrower agent requests a loan from the marketplace.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "borrowerAgentId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "requestedAmountUsdc": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 1000
+        }
+      },
+      "required": [
+        "borrowerAgentId",
+        "requestedAmountUsdc"
+      ]
+    },
+    "method": "POST",
+    "path": "/lending/borrow"
+  },
+  {
+    "name": "get_borrow_quote",
+    "description": "Get a quote for a potential loan, including required collateral and interest.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "borrowerAgentId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "amountUsdc": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "borrowerAgentId",
+        "amountUsdc"
+      ]
+    },
+    "method": "GET",
+    "path": "/lending/borrow/quote"
+  },
+  {
+    "name": "repay_loan",
+    "description": "Repay an active loan and report profit generated.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "matchId": {
+          "type": "integer"
+        },
+        "borrowerAgentId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "profitGeneratedUsdc": {
+          "type": "number",
+          "default": 0
+        }
+      },
+      "required": [
+        "matchId",
+        "borrowerAgentId"
+      ]
+    },
+    "method": "POST",
+    "path": "/lending/repay"
+  },
+  {
+    "name": "get_agent_reputation",
+    "description": "Get the current reputation score and loan limits for an agent.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "agentId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "agentId"
+      ]
+    },
+    "method": "GET",
+    "path": "/lending/agents/:agentId/rep"
+  },
+  {
+    "name": "fetch_open_offers",
+    "description": "Fetch all open lend offers from the marketplace, optionally filtered by minimum reputation and maximum amount.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "minRep": {
+          "type": "integer",
+          "description": "Minimum reputation required for the offer"
+        },
+        "maxAmount": {
+          "type": "number",
+          "description": "Maximum USDC amount allowed for the offer"
+        }
+      }
+    },
+    "method": "GET",
+    "path": "/lending/offers"
+  }
+]

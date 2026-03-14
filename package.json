@@ -12,6 +12,7 @@
     "deploy:localhost": "hardhat run scripts/deploy.ts --network localhost",
     "deploy:base-sepolia": "hardhat run scripts/deploy.ts --network baseSepolia",
     "seed:demo": "ts-node scripts/seed-demo.ts",
+    "db:inspect": "ts-node scripts/db-inspect.ts",
     "frontend:dev": "npm --prefix frontend run dev",
     "frontend:build": "npm --prefix frontend run build",
     "test:contract": "hardhat test test/AgentFiLending.test.ts",
@@ -49,6 +50,7 @@
     "hardhat-gas-reporter": "^1.0.10",
     "jest": "^29.7.0",
     "joi": "^17.13.3",
+    "node-cron": "^3.0.3",
     "pg-mem": "^3.0.14",
     "pg": "^8.16.3",
     "solidity-coverage": "^0.8.17",
@@ -59,6 +61,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.2.17",
     "@openzeppelin/contracts": "^5.6.1"
   }
 }

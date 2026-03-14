@@ -9,6 +9,9 @@ export interface CreateUserPayload {
   email: string;
   walletAddress?: string;
   zkProofData?: string;
+  signature?: string;
+  message?: string;
+  ensName?: string;
 }
 
 export interface CreateUserResponse {
@@ -16,6 +19,19 @@ export interface CreateUserResponse {
   email: string;
   walletAddress: string;
   zkVerified: boolean;
+  ensName?: string | null;
+  existing?: boolean;
+}
+
+export interface SessionResponse {
+  user: {
+    userId: string;
+    email: string;
+    walletAddress: string;
+    ensName?: string | null;
+    zkVerified: boolean;
+  } | null;
+  agents: UserAgent[];
 }
 
 export interface CreateAgentPayload {
@@ -25,6 +41,10 @@ export interface CreateAgentPayload {
   ensName: string;
   initialScore?: number;
   strategy?: Record<string, unknown>;
+  executionIntervalSeconds?: number;
+  riskTolerance?: "conservative" | "balanced" | "aggressive";
+  profitTargetPct?: number;
+  enabledTools?: string[];
 }
 
 export interface CreateAgentResponse {
@@ -36,6 +56,90 @@ export interface CreateAgentResponse {
   fileverseDocId: string;
   registerTxHash: string;
   initialScore: number;
+  executionIntervalSeconds?: number;
+  enabledTools?: string[];
+  riskTolerance?: string;
+  profitTargetPct?: number;
+  strategyPrompt?: string;
+  runtimeStatus?: string;
+}
+
+export interface UserAgent {
+  agent_id: string;
+  ens_name: string;
+  wallet_address: string;
+  role: "lender" | "borrower";
+  status: string;
+  reputation_score: number;
+  fileverse_doc_id?: string | null;
+  has_private_key?: boolean;
+  execution_interval_seconds?: number;
+  enabled_tools?: string[];
+  risk_tolerance?: string;
+  profit_target_pct?: number;
+  runtime_status?: string;
+  last_execution_at?: string | null;
+  next_execution_at?: string | null;
+  last_result_summary?: string | null;
+  total_cycles?: number;
+  total_profit_usdc?: number;
+  total_borrowed_usdc?: number;
+  total_lent_usdc?: number;
+  eth_balance?: number;
+  usdc_balance?: number;
+  strategy?: Record<string, unknown>;
+}
+
+export interface FundAgentPayload {
+  ethAmount?: string;
+  usdcAmount?: number;
+}
+
+export interface RuntimeLog {
+  log_id: number;
+  cycle_id: string;
+  phase: string;
+  level: string;
+  message: string;
+  tool_name?: string | null;
+  tool_input?: unknown;
+  tool_output?: unknown;
+  metadata?: unknown;
+  created_at: string;
+}
+
+export interface AgentRuntimeResponse {
+  agent: UserAgent;
+  strategy: Record<string, unknown>;
+  enabledTools: string[];
+  walletFunding: {
+    ethBalance: number;
+    usdcBalance: number;
+    usdcAddress?: string | null;
+    contractAddress?: string | null;
+  };
+  logs: RuntimeLog[];
+}
+
+export interface AdminOverviewResponse {
+  tools: Array<Record<string, unknown>>;
+  agents: UserAgent[];
+  recentLogs: Array<{
+    log_id: number;
+    agent_id: string;
+    ens_name: string;
+    role: string;
+    phase: string;
+    level: string;
+    message: string;
+    tool_name?: string | null;
+    created_at: string;
+  }>;
+  activity: Array<{
+    type: string;
+    total_amount: number | string;
+    total_events: number | string;
+  }>;
 }
 
 // ─── Lending - Offers ────────────────────────────────────────────────────────
@@ -84,6 +188,7 @@ export interface RequestBorrowPayload {
 
 export type RequestBorrowResponse =
   | { status: "pending_user_approval"; approvalId: number }
+  | { status: "queued"; message: string }
   | {
       status: "funded";
       matchId: number;

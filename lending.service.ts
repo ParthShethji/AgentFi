@@ -5,7 +5,6 @@
  */
 
 import * as blockchain from "./blockchain.service";
-import { verifyAgentEnsIntegrity } from "./blockchain.service";
 import { ethers } from "ethers";
 // @ts-ignore
 const db = require("./config/db");
@@ -137,20 +136,20 @@ export async function postLendOffer({ lenderAgentId, maxAmountUsdc, minRepRequir
   if (lender.role !== "lender") throw new Error("Agent is not a lender");
   if (lender.status !== "active") throw new Error("Lender agent is not active");
 
-  // ── ENS integrity: confirm this agent's ENS name is genuinely bound to this wallet ──
-  await verifyAgentEnsIntegrity(lender.wallet_address, lender.ens_name);
-
   await blockchain.ensureAgentRegistered(lender.wallet_address, lender.ens_name, lender.reputation_score || 35);
 
-  // Auto-mint + auto-approve for demo (MockERC20 on local hardhat)
+  const usdcBalance = await blockchain.checkBalance(lender.wallet_address);
+  if (usdcBalance < maxAmountUsdc) {
+    throw new Error(
+      `Lender agent wallet needs ${maxAmountUsdc} USDC before posting an offer. Current balance: ${usdcBalance} USDC. Fund the agent wallet from the connected user wallet first.`
+    );
+  }
+
   const allowance = await blockchain.checkAllowance(lender.wallet_address);
   if (allowance < maxAmountUsdc) {
     const { getAgentPrivateKey } = require("./config/agentKeys");
     const privateKey = getAgentPrivateKey(lender.wallet_address);
     if (privateKey) {
-      logger.info(`[lending] auto-funding + minting ${maxAmountUsdc} USDC to lender ${lender.wallet_address}`);
-      await blockchain.fundEth(lender.wallet_address);
-      await blockchain.mintUsdc(lender.wallet_address, maxAmountUsdc);
       await blockchain.approveUsdc(privateKey, maxAmountUsdc * 10);
     } else {
       throw new Error(`Lender must approve contract before posting offer. No private key available for auto-approve.`);
@@ -192,9 +191,6 @@ export async function requestBorrow({ borrowerAgentId, requestedAmountUsdc }: an
   const borrower = await getAgentById(borrowerAgentId);
   if (borrower.role !== "borrower") throw new Error("Agent is not a borrower");
   if (borrower.status !== "active") throw new Error("Borrower agent is not active");
-
-  // ── ENS integrity: confirm this agent's ENS name is genuinely bound to this wallet ──
-  await verifyAgentEnsIntegrity(borrower.wallet_address, borrower.ens_name);
 
   await blockchain.ensureAgentRegistered(borrower.wallet_address, borrower.ens_name, borrower.reputation_score || 25);
 

@@ -6,7 +6,7 @@ import AmbientBackground from '../components/AmbientBackground';
 import { useApp } from '../context/AppContext';
 import { useApi } from '../context/ApiContext';
 import { resolveEns } from '../api';
-import { connectMetaMask, formatAddress, getEthereumProvider } from '../wallet/metamask';
+import { connectMetaMask, formatAddress, getEthereumProvider, signMessage } from '../wallet/metamask';
 
 const STEP_LABELS = ['Connect', 'Verify ENS', 'ZK Proof'];
 
@@ -130,10 +130,15 @@ export default function OnboardingPage() {
     try {
       let currentUserId = userId;
       if (!currentUserId) {
+        const signatureMessage = `AgentFi login for ${walletAddress} at ${new Date().toISOString()}`;
+        const signature = walletAddress ? await signMessage(signatureMessage, walletAddress) : undefined;
         const userRes = await api.createUser({
           email: DEFAULT_EMAIL,
           walletAddress: walletAddress || undefined,
           zkProofData: walletAddress || 'mock-zk-proof',
+          signature,
+          message: signatureMessage,
+          ensName: verifiedEnsName || undefined,
         });
         currentUserId = userRes.userId;
         setUserId(currentUserId);

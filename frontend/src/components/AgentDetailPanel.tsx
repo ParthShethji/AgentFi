@@ -5,6 +5,8 @@ import { X, RefreshCw, Edit3, Lock } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { Agent, TRADE_HISTORY, PNL_VAULT_ALPHA, PNL_TRADER_BETA } from '../data/mockData';
 import { useApi } from '../context/ApiContext';
+import { useApp } from '../context/AppContext';
+import { getChainLabel, sendEthToAgent, sendUsdcToAgent } from '../wallet/metamask';
 
 interface Props {
   agent: Agent;
@@ -61,6 +63,7 @@ function TradeTooltip({ time }: { time: string }) {
 
 export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Props) {
   const { api } = useApi();
+  const { walletChainId } = useApp();
   const queryClient = useQueryClient();
   const [tradeFilter, setTradeFilter] = useState<TradeFilter>('All');
   const [page, setPage] = useState(1);
@@ -73,6 +76,10 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
       : 'Only lend to agents with reputation above 80.\nMaximum single loan: 500 USDC.\nMaximum concurrent loans: 3.\nMinimum interest rate: 2%.\n\nBorrow maximum 800 USDC per opportunity.\nStop-loss at 5%. Take-profit at 12%.\nOnly trade on Base network.\nPreferred assets: USDC, ETH, cbBTC.'
   );
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [fundEthAmount, setFundEthAmount] = useState('');
+  const [fundUsdcAmount, setFundUsdcAmount] = useState('');
+  const [fundingState, setFundingState] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
+  const [fundingMessage, setFundingMessage] = useState('');
 
   const { data: agentRep, isLoading: repLoading } = useQuery({
     queryKey: ['agentRep', backendAgentId],
@@ -83,6 +90,12 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
     queryKey: ['agentLoans', backendAgentId],
     queryFn: () => api.getAgentLoans(backendAgentId!, 'borrower'),
     enabled: !!backendAgentId,
+  });
+  const { data: runtimeData } = useQuery({
+    queryKey: ['agentRuntime', backendAgentId],
+    queryFn: () => api.getAgentRuntime(backendAgentId!),
+    enabled: !!backendAgentId,
+    refetchInterval: 5000,
   });
   const loans = agentLoansData?.loans ?? [];
 
@@ -105,18 +118,82 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
   const isPositive = pnlData[pnlData.length - 1].value >= 0;
   const lineColor = isPositive ? '#22C55E' : '#EF4444';
 
-  const allTrades = TRADE_HISTORY.filter(t => t.agentId === agent.id);
+  useEffect(() => {
+    if (runtimeData?.strategy) {
+      setStrategy(JSON.stringify(runtimeData.strategy, null, 2));
+    }
+  }, [runtimeData]);
+
+  const runtimeTrades = (runtimeData?.logs || []).map((log: any) => ({
+    id: `runtime-${log.log_id}`,
+    agentId: agent.id,
+    time: log.created_at,
+    type: log.tool_name === 'post_lend_offer' ? 'Lend' : log.tool_name === 'request_borrow' ? 'Borrow' : 'Swap',
+    counterparty: log.tool_name || log.phase,
+    amount: Number((log.metadata as any)?.principalUsdc || (log.metadata as any)?.maxAmountUsdc || 0),
+    status: log.level === 'error' ? 'Defaulted' : 'Completed',
+    pnl: Number((log.metadata as any)?.realizedProfit || 0),
+  }));
+  const allTrades = runtimeTrades.length ? runtimeTrades : TRADE_HISTORY.filter(t => t.agentId === agent.id);
   const filtered = tradeFilter === 'All' ? allTrades : allTrades.filter(t => t.type === tradeFilter);
   const PAGE_SIZE = 10;
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageTrades = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (!backendAgentId) return;
     setSaveState('saving');
-    setTimeout(() => {
+    try {
+      await api.updateAgentStrategy(backendAgentId, JSON.parse(strategy));
+      queryClient.invalidateQueries({ queryKey: ['agentRuntime', backendAgentId] });
       setSaveState('saved');
-      setTimeout(() => { setSaveState('idle'); setEditMode(false); }, 2000);
-    }, 1500);
+      setTimeout(() => { setSaveState('idle'); setEditMode(false); }, 1200);
+    } catch {
+      setSaveState('idle');
+    }
+  };
+
+  const handleFund = async () => {
+    if (!runtimeData?.agent.wallet_address) return;
+
+    const ethAmount = fundEthAmount.trim();
+    const usdcAmount = fundUsdcAmount.trim();
+
+    if (!ethAmount && !usdcAmount) {
+      setFundingState('error');
+      setFundingMessage('Enter an ETH or USDC amount first.');
+      return;
+    }
+
+    setFundingState('sending');
+    setFundingMessage('Waiting for wallet confirmations...');
+
+    try {
+      const txHashes: string[] = [];
+      if (ethAmount) {
+        txHashes.push(await sendEthToAgent(runtimeData.agent.wallet_address, ethAmount));
+      }
+      if (usdcAmount) {
+        const usdcAddress = runtimeData.walletFunding?.usdcAddress;
+        if (!usdcAddress) {
+          throw new Error('USDC token address is not configured on the backend.');
+        }
+        txHashes.push(await sendUsdcToAgent(usdcAddress, runtimeData.agent.wallet_address, usdcAmount));
+      }
+
+      setFundingState('done');
+      setFundingMessage(`Confirmed ${txHashes.length} funding transaction${txHashes.length > 1 ? 's' : ''}.`);
+      setFundEthAmount('');
+      setFundUsdcAmount('');
+      if (backendAgentId) {
+        queryClient.invalidateQueries({ queryKey: ['agentRuntime', backendAgentId] });
+        queryClient.invalidateQueries({ queryKey: ['userAgents'] });
+        queryClient.invalidateQueries({ queryKey: ['adminOverview'] });
+      }
+    } catch (error: any) {
+      setFundingState('error');
+      setFundingMessage(error?.message || 'Funding transaction failed.');
+    }
   };
 
   return (
@@ -165,7 +242,17 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
                 <button title="Edit Strategy" onClick={() => setEditMode(!editMode)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'Inter', fontSize: 12 }}>
                   <Edit3 size={14} /> Edit
                 </button>
-                <button title="Refresh" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                <button
+                  title="Refresh"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                  onClick={() => {
+                    if (backendAgentId) {
+                      queryClient.invalidateQueries({ queryKey: ['agentRuntime', backendAgentId] });
+                      queryClient.invalidateQueries({ queryKey: ['agentRep', backendAgentId] });
+                      queryClient.invalidateQueries({ queryKey: ['agentLoans', backendAgentId] });
+                    }
+                  }}
+                >
                   <RefreshCw size={16} />
                 </button>
                 <button title="Close" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
@@ -183,6 +270,76 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
           </div>
 
           <div style={{ height: 1, background: 'var(--border)', marginBottom: 20 }} />
+
+          {backendAgentId && runtimeData?.walletFunding && (
+            <div className="glass" style={{ padding: '20px 24px', marginBottom: 20, borderRadius: 14 }}>
+              <p className="label-muted" style={{ marginBottom: 12 }}>WALLET FUNDING</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginBottom: 14 }}>
+                <div className="glass" style={{ padding: '10px 12px', borderRadius: 12 }}>
+                  <div style={{ fontFamily: 'Inter', fontSize: 11, color: 'var(--text-secondary)' }}>Agent wallet</div>
+                  <div style={{ fontFamily: 'JetBrains Mono', fontSize: 12, color: 'var(--text-primary)', wordBreak: 'break-all' }}>
+                    {runtimeData.agent.wallet_address}
+                  </div>
+                </div>
+                <div className="glass" style={{ padding: '10px 12px', borderRadius: 12 }}>
+                  <div style={{ fontFamily: 'Inter', fontSize: 11, color: 'var(--text-secondary)' }}>Current balances</div>
+                  <div style={{ fontFamily: 'JetBrains Mono', fontSize: 12, color: 'var(--text-primary)' }}>
+                    {runtimeData.walletFunding.ethBalance.toFixed(4)} ETH
+                  </div>
+                  <div style={{ fontFamily: 'JetBrains Mono', fontSize: 12, color: 'var(--text-primary)' }}>
+                    {runtimeData.walletFunding.usdcBalance.toFixed(2)} USDC
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                Funding here uses the connected user wallet directly via ethers. Nothing is minted or pushed from the backend automatically.
+              </div>
+              <div style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                Connected network: <span style={{ color: 'var(--text-primary)' }}>{getChainLabel(walletChainId)}</span>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.001"
+                  value={fundEthAmount}
+                  placeholder="ETH amount"
+                  onChange={(e) => setFundEthAmount(e.target.value)}
+                  style={{ width: 120, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-primary)' }}
+                />
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={fundUsdcAmount}
+                  placeholder="USDC amount"
+                  onChange={(e) => setFundUsdcAmount(e.target.value)}
+                  style={{ width: 140, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-primary)' }}
+                />
+                <button
+                  className="btn btn-primary glow-accent"
+                  style={{ height: 36, padding: '0 16px', fontSize: 12 }}
+                  onClick={handleFund}
+                  disabled={fundingState === 'sending'}
+                >
+                  {fundingState === 'sending' ? 'Funding...' : 'Fund From My Wallet'}
+                </button>
+              </div>
+
+              {!!runtimeData.walletFunding.usdcAddress && (
+                <div style={{ marginTop: 10, fontFamily: 'JetBrains Mono', fontSize: 11, color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
+                  USDC token: {runtimeData.walletFunding.usdcAddress}
+                </div>
+              )}
+              {!!fundingMessage && (
+                <div style={{ marginTop: 10, fontFamily: 'Inter', fontSize: 12, color: fundingState === 'error' ? 'var(--danger)' : 'var(--text-secondary)' }}>
+                  {fundingMessage}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── P&L Chart ── */}
           <div className="glass" style={{ padding: '20px 16px 12px', marginBottom: 16, borderRadius: 14 }}>

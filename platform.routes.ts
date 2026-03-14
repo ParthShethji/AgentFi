@@ -2,12 +2,91 @@ import { Router } from "express";
 import { randomUUID, createHash } from "crypto";
 import { ethers } from "ethers";
 import * as blockchain from "./blockchain.service";
-import { setAgentPrivateKey } from "./config/agentKeys";
+import { persistAgentPrivateKey, setAgentPrivateKey } from "./config/agentKeys";
 import { putStrategyDoc } from "./utils/strategyStore";
-// @ts-ignore
-const db = require("./config/db");
+import { agentRuntimeManager, getRegisteredTools } from "./runtime.manager";
+import { query as db } from "./config/db";
 
 const router = Router();
+
+function normalizeRiskTolerance(value: unknown) {
+  const normalized = String(value || "balanced").toLowerCase();
+  return ["conservative", "balanced", "aggressive"].includes(normalized) ? normalized : "balanced";
+}
+
+function buildAgentPrompt(role: "lender" | "borrower", strategy: Record<string, unknown>) {
+  const template = role === "lender"
+    ? "Autonomous lender agent. Post disciplined offers, protect capital, and seek yield."
+    : "Autonomous borrower agent. Compare offers, borrow efficiently, trade prudently, and repay on time.";
+
+  return [
+    template,
+    "Use the enabled tools when you need marketplace, reputation, and repayment actions.",
+    `User strategy: ${JSON.stringify(strategy)}`,
+  ].join("\n\n");
+}
+
+function defaultStrategy(role: "lender" | "borrower") {
+  if (role === "lender") {
+    return {
+      maxLoanAmount: 500,
+      minReputation: 25,
+      interestRate: 2,
+      tradeAllocation: { USDC: 100 },
+      repayAfterSeconds: 30,
+      signals: [],
+    };
+  }
+
+  return {
+    maxLoanAmount: 250,
+    minReputation: 25,
+    interestRate: 2,
+    tradeAllocation: { ETH: 60, stablecoin: 40 },
+    repayAfterSeconds: 30,
+    signals: [],
+  };
+}
+
+async function findExistingUserByWallet(walletAddress?: string) {
+  if (!walletAddress) return null;
+  const { rows } = await db(
+    `SELECT user_id, email, wallet_address, ens_name, zk_proof_status
+     FROM users
+     WHERE lower(wallet_address) = lower($1)
+     LIMIT 1`,
+    [walletAddress]
+  );
+  return rows[0] || null;
+}
+
+async function listUserAgents(userId: string) {
+  const { rows } = await db(
+      `SELECT a.agent_id, a.ens_name, a.wallet_address, a.role, a.status, a.reputation_score,
+              a.fileverse_doc_id, c.execution_interval_seconds, c.enabled_tools, c.risk_tolerance,
+              c.profit_target_pct, c.runtime_status, c.last_execution_at, c.next_execution_at,
+              c.last_result_summary, c.total_cycles, c.total_profit_usdc, c.total_borrowed_usdc, c.total_lent_usdc,
+              a.private_key IS NOT NULL AS has_private_key,
+              c.strategy_json
+     FROM agents a
+     LEFT JOIN agent_configs c ON c.agent_id = a.agent_id
+     WHERE a.user_id = $1
+     ORDER BY a.created_at DESC`,
+    [userId]
+  );
+  return Promise.all(
+    rows.map(async (row: any) => {
+      const funding = await blockchain.getWalletFundingSnapshot(row.wallet_address);
+      return {
+        ...row,
+        eth_balance: funding.ethBalance,
+        usdc_balance: funding.usdcBalance,
+        enabled_tools: row.enabled_tools ? JSON.parse(row.enabled_tools) : [],
+        strategy: row.strategy_json ? JSON.parse(row.strategy_json) : {},
+      };
+    })
+  );
+}
 
 // Public: resolve ENS name to address (used by onboarding before user exists).
 router.get("/ens/resolve", async (req, res) => {
@@ -43,46 +122,123 @@ router.get("/ens/nodes", (req, res) => {
   }
 });
 
+router.get("/tools", (_req, res) => {
+  return res.json({ tools: getRegisteredTools() });
+});
+
+router.get("/session", async (req, res) => {
+  const walletAddress = typeof req.query.walletAddress === "string" ? req.query.walletAddress.trim() : "";
+  if (!walletAddress) {
+    return res.status(400).json({ error: "walletAddress is required" });
+  }
+
+  try {
+    const user = await findExistingUserByWallet(walletAddress);
+    if (!user) {
+      return res.json({ user: null, agents: [] });
+    }
+
+    const agents = await listUserAgents(String(user.user_id));
+    return res.json({
+      user: {
+        userId: user.user_id,
+        email: user.email,
+        walletAddress: user.wallet_address,
+        ensName: user.ens_name || null,
+        zkVerified: user.zk_proof_status === "verified",
+      },
+      agents,
+    });
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message || "failed to load session" });
+  }
+});
+
 router.post("/users", async (req, res) => {
-  const { email, walletAddress, zkProofData } = req.body || {};
+  const { email, walletAddress, zkProofData, signature, message, ensName } = req.body || {};
 
   if (!email) {
     return res.status(400).json({ error: "email is required" });
   }
 
-  const userId = randomUUID();
-  const userWallet = walletAddress || ethers.Wallet.createRandom().address;
-
-  // Derive a deterministic human_id from the ZK proof (mock: hash of wallet address).
-  // In production this would come from Reclaim Protocol's verified proof payload.
-  let humanId: string | null = null;
-  let zkStatus: "none" | "verified" = "none";
-  if (zkProofData || walletAddress) {
-    humanId = createHash("sha256")
-      .update(zkProofData || walletAddress || "")
-      .digest("hex");
-    zkStatus = "verified";
-  }
-
   try {
-    if (humanId) {
-      const { rows: existing } = await db.query(
-        `SELECT 1 FROM users WHERE human_id = $1`,
-        [humanId]
-      );
-      if (existing.length) {
-        return res.status(409).json({ error: "This identity has already been registered. One human, one account." });
+    if (walletAddress && signature && message) {
+      const recovered = ethers.verifyMessage(message, signature);
+      if (recovered.toLowerCase() !== String(walletAddress).toLowerCase()) {
+        return res.status(401).json({ error: "wallet signature verification failed" });
       }
     }
 
-    await db.query(
-      `INSERT INTO users (user_id, email, wallet_address, zk_proof_status, human_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [userId, email, userWallet, zkStatus, humanId]
+    const existingUser = await findExistingUserByWallet(walletAddress);
+    if (existingUser) {
+      await db(
+        `UPDATE users
+         SET last_login = NOW(),
+             ens_name = COALESCE($2, ens_name)
+         WHERE user_id = $1`,
+        [existingUser.user_id, ensName || null]
+      );
+      return res.json({
+        userId: existingUser.user_id,
+        email: existingUser.email,
+        walletAddress: existingUser.wallet_address,
+        zkVerified: existingUser.zk_proof_status === "verified",
+        ensName: existingUser.ens_name || ensName || null,
+        existing: true,
+      });
+    }
+
+    const userId = randomUUID();
+    const userWallet = walletAddress || ethers.Wallet.createRandom().address;
+    const humanId = createHash("sha256")
+      .update(String(zkProofData || walletAddress || email))
+      .digest("hex");
+    const zkStatus: "none" | "verified" = zkProofData || walletAddress ? "verified" : "none";
+
+    const { rows: sameHuman } = await db(
+      `SELECT user_id, wallet_address FROM users WHERE human_id = $1 LIMIT 1`,
+      [humanId]
     );
-    return res.json({ userId, email, walletAddress: userWallet, zkVerified: zkStatus === "verified" });
+    if (sameHuman.length) {
+      const row = sameHuman[0];
+      if (String(row.wallet_address).toLowerCase() === String(userWallet).toLowerCase()) {
+        return res.json({
+          userId: row.user_id,
+          email,
+          walletAddress: row.wallet_address,
+          zkVerified: zkStatus === "verified",
+          ensName: ensName || null,
+          existing: true,
+        });
+      }
+      return res.status(409).json({ error: "This identity has already been registered. One human, one account." });
+    }
+
+    await db(
+      `INSERT INTO users (user_id, email, wallet_address, ens_name, zk_proof_status, human_id, created_at, last_login)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+      [userId, email, userWallet, ensName || null, zkStatus, humanId]
+    );
+
+    return res.json({
+      userId,
+      email,
+      walletAddress: userWallet,
+      zkVerified: zkStatus === "verified",
+      ensName: ensName || null,
+      existing: false,
+    });
   } catch (error: any) {
     return res.status(400).json({ error: error.message || "failed to create user" });
+  }
+});
+
+router.get("/users/:userId/agents", async (req, res) => {
+  try {
+    const agents = await listUserAgents(req.params.userId);
+    return res.json({ agents });
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message || "failed to load agents" });
   }
 });
 
@@ -90,17 +246,13 @@ router.post("/agents", async (req, res) => {
   const {
     userId,
     role,
-    username,
     ensName,
     initialScore = 25,
-    strategy = {
-      maxLoanAmount: 500,
-      minReputation: 25,
-      interestRate: 2.0,
-      tradeAllocation: { ETH: 60, stablecoin: 40 },
-      repayAfterSeconds: 30,
-      signals: [],
-    },
+    strategy,
+    executionIntervalSeconds = 60,
+    riskTolerance = "balanced",
+    profitTargetPct = 4,
+    enabledTools,
   } = req.body || {};
 
   if (!userId || !role || !ensName) {
@@ -116,9 +268,8 @@ router.post("/agents", async (req, res) => {
   }
 
   try {
-    // Verify user is ZK-verified before allowing agent creation
-    const { rows: userRows } = await db.query(
-      `SELECT zk_proof_status FROM users WHERE user_id = $1`,
+    const { rows: userRows } = await db(
+      `SELECT user_id, zk_proof_status FROM users WHERE user_id = $1`,
       [userId]
     );
     if (!userRows.length) {
@@ -128,8 +279,7 @@ router.post("/agents", async (req, res) => {
       return res.status(403).json({ error: "ZK human verification required before creating an agent" });
     }
 
-    // Check ENS name not already taken
-    const { rows: ensRows } = await db.query(
+    const { rows: ensRows } = await db(
       `SELECT 1 FROM agents WHERE ens_name = $1`,
       [ensName]
     );
@@ -137,40 +287,74 @@ router.post("/agents", async (req, res) => {
       return res.status(409).json({ error: "This ENS name is already registered on the platform" });
     }
 
+    const agentRole = role as "lender" | "borrower";
+    const mergedStrategy = {
+      ...defaultStrategy(agentRole),
+      ...(strategy || {}),
+    };
+    const executionSeconds = Math.max(10, Number(executionIntervalSeconds || 60));
+    const selectedTools = Array.isArray(enabledTools) && enabledTools.length
+      ? enabledTools.map((tool) => String(tool))
+      : null;
+    const enabledToolNames = Array.isArray(selectedTools)
+      ? selectedTools
+      : getRegisteredTools()
+          .filter((tool) => defaultEnabledForRole(agentRole).includes(String(tool.name)))
+          .map((tool) => String(tool.name));
+
     const agentId = randomUUID();
     const docId = `doc-${agentId}`;
     const agentWallet = ethers.Wallet.createRandom();
+    const prompt = buildAgentPrompt(agentRole, mergedStrategy);
+    const normalizedRisk = normalizeRiskTolerance(riskTolerance);
 
     setAgentPrivateKey(agentWallet.address, agentWallet.privateKey);
-    putStrategyDoc(docId, strategy);
+    putStrategyDoc(docId, mergedStrategy);
 
     const registerTx = await blockchain.registerAgent(agentWallet.address, Number(initialScore), ensName);
 
-    // Auto-fund agent wallet with ETH for gas, then mint USDC and approve lending contract
-    try {
-      await blockchain.fundEth(agentWallet.address, "1.0");
-      await blockchain.mintUsdc(agentWallet.address, 10000);
-      await blockchain.approveUsdc(agentWallet.privateKey, 100000);
-    } catch (mintErr: any) {
-      console.warn(`[platform] auto-mint/approve failed (non-fatal): ${mintErr.message}`);
-    }
-
-    await db.query(
+    await db(
       `INSERT INTO agents (
-         agent_id, user_id, ens_name, wallet_address, fileverse_doc_id, role, status, reputation_score, created_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, NOW())`,
-      [agentId, userId, ensName, agentWallet.address, docId, role, Number(initialScore)]
+         agent_id, user_id, ens_name, wallet_address, private_key, fileverse_doc_id, role, status, reputation_score, created_at, last_activity_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8, NOW(), NOW())`,
+      [agentId, userId, ensName, agentWallet.address, agentWallet.privateKey, docId, agentRole, Number(initialScore)]
     );
+    await persistAgentPrivateKey(agentId, agentWallet.address, agentWallet.privateKey);
+
+    await db(
+      `INSERT INTO agent_configs (
+         agent_id, agent_type, strategy_prompt, strategy_json, execution_interval_seconds,
+         enabled_tools, risk_tolerance, profit_target_pct, runtime_status, next_execution_at, current_positions_json, created_at, updated_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', NOW(), '{}', NOW(), NOW())`,
+      [
+        agentId,
+        agentRole,
+        prompt,
+        JSON.stringify(mergedStrategy),
+        executionSeconds,
+        JSON.stringify(enabledToolNames),
+        normalizedRisk,
+        Number(profitTargetPct || 4),
+      ]
+    );
+
+    await agentRuntimeManager.registerOrRefreshAgent(agentId);
 
     return res.json({
       agentId,
       ensName,
       walletAddress: agentWallet.address,
       privateKey: agentWallet.privateKey,
-      role,
+      role: agentRole,
       fileverseDocId: docId,
       registerTxHash: registerTx.txHash,
       initialScore: Number(initialScore),
+      executionIntervalSeconds: executionSeconds,
+      enabledTools: enabledToolNames,
+      riskTolerance: normalizedRisk,
+      profitTargetPct: Number(profitTargetPct || 4),
+      strategyPrompt: prompt,
+      runtimeStatus: "active",
     });
   } catch (error: any) {
     return res.status(400).json({ error: error.message || "failed to create agent" });
@@ -182,17 +366,126 @@ router.put("/agents/:agentId/strategy", async (req, res) => {
   const strategy = req.body || {};
 
   try {
-    const { rows } = await db.query(`SELECT fileverse_doc_id FROM agents WHERE agent_id = $1`, [agentId]);
+    const { rows } = await db(
+      `SELECT a.fileverse_doc_id, a.role
+       FROM agents a
+       WHERE a.agent_id = $1`,
+      [agentId]
+    );
     if (!rows.length) {
       return res.status(404).json({ error: "agent not found" });
     }
 
     const docId = rows[0].fileverse_doc_id;
     putStrategyDoc(docId, strategy);
+    await db(
+      `UPDATE agent_configs
+       SET strategy_json = $2, strategy_prompt = $3, updated_at = NOW()
+       WHERE agent_id = $1`,
+      [agentId, JSON.stringify(strategy), buildAgentPrompt(rows[0].role, strategy)]
+    );
+    await agentRuntimeManager.registerOrRefreshAgent(agentId);
     return res.json({ agentId, fileverseDocId: docId, updated: true });
   } catch (error: any) {
     return res.status(400).json({ error: error.message || "failed to update strategy" });
   }
 });
+
+router.get("/agents/:agentId/runtime", async (req, res) => {
+  try {
+    const runtime = await agentRuntimeManager.getAgentRuntime(req.params.agentId);
+    if (!runtime) {
+      return res.status(404).json({ error: "agent not found" });
+    }
+    return res.json(runtime);
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message || "failed to load runtime" });
+  }
+});
+
+router.post("/agents/:agentId/run", async (req, res) => {
+  try {
+    await agentRuntimeManager.runAgentNow(req.params.agentId, "manual_api");
+    return res.json({ agentId: req.params.agentId, triggered: true });
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message || "failed to trigger agent" });
+  }
+});
+
+router.patch("/agents/:agentId/status", async (req, res) => {
+  const runtimeStatus = req.body?.runtimeStatus;
+  if (!["active", "paused", "stopped"].includes(runtimeStatus)) {
+    return res.status(400).json({ error: "runtimeStatus must be active, paused, or stopped" });
+  }
+
+  try {
+    await db(`UPDATE agents SET status = $2 WHERE agent_id = $1`, [
+      req.params.agentId,
+      runtimeStatus === "active" ? "active" : "paused",
+    ]);
+    await agentRuntimeManager.pauseAgent(req.params.agentId, runtimeStatus);
+    return res.json({ agentId: req.params.agentId, runtimeStatus });
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message || "failed to update agent status" });
+  }
+});
+
+router.post("/agents/:agentId/fund", async (req, res) => {
+  const ethAmount = String(req.body?.ethAmount || "0");
+  const usdcAmount = Number(req.body?.usdcAmount || 0);
+
+  try {
+    const { rows } = await db(
+      `SELECT agent_id, ens_name, wallet_address, role
+       FROM agents
+       WHERE agent_id = $1
+       LIMIT 1`,
+      [req.params.agentId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "agent not found" });
+    }
+
+    const agent = rows[0];
+    const actions: Record<string, unknown> = {};
+
+    if (Number(ethAmount) > 0) {
+      actions.eth = await blockchain.fundEth(agent.wallet_address, ethAmount);
+    }
+    if (usdcAmount > 0) {
+      actions.usdc = await blockchain.mintUsdc(agent.wallet_address, usdcAmount);
+    }
+
+    await db(
+      `UPDATE agents SET last_activity_at = NOW() WHERE agent_id = $1`,
+      [req.params.agentId]
+    );
+
+    return res.json({
+      agentId: agent.agent_id,
+      ensName: agent.ens_name,
+      walletAddress: agent.wallet_address,
+      funded: true,
+      actions,
+    });
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message || "failed to fund agent" });
+  }
+});
+
+router.get("/admin/overview", async (_req, res) => {
+  try {
+    const overview = await agentRuntimeManager.getAdminOverview();
+    return res.json(overview);
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message || "failed to load admin overview" });
+  }
+});
+
+function defaultEnabledForRole(role: "lender" | "borrower") {
+  return role === "lender"
+    ? ["fetch_open_offers", "post_lend_offer", "get_agent_reputation"]
+    : ["fetch_open_offers", "get_borrow_quote", "request_borrow", "repay_loan", "get_agent_reputation"];
+}
 
 export = router;

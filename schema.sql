@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
     user_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email           TEXT UNIQUE,
     wallet_address  TEXT UNIQUE,
+    ens_name        TEXT,
     zk_proof_status TEXT DEFAULT 'none',   -- none | pending | verified
     human_id        TEXT UNIQUE,           -- ZK-derived hash, one per human (anti-sybil)
     created_at      TIMESTAMPTZ DEFAULT NOW(),
@@ -18,6 +19,7 @@ CREATE TABLE IF NOT EXISTS agents (
     user_id           UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     ens_name          TEXT UNIQUE NOT NULL,   -- any valid ENS name (e.g. alice.eth)
     wallet_address    TEXT UNIQUE NOT NULL,   -- 2-of-2 multisig address
+    private_key       TEXT,
     fileverse_doc_id  TEXT,
     bitgo_wallet_id   TEXT,
     role              TEXT NOT NULL CHECK (role IN ('lender', 'borrower')),
@@ -30,6 +32,50 @@ CREATE TABLE IF NOT EXISTS agents (
 
 CREATE INDEX idx_agents_user_id ON agents(user_id);
 CREATE INDEX idx_agents_wallet  ON agents(wallet_address);
+
+-- Runtime configuration and state for autonomous agents
+
+CREATE TABLE IF NOT EXISTS agent_configs (
+    agent_id                    UUID PRIMARY KEY REFERENCES agents(agent_id) ON DELETE CASCADE,
+    agent_type                  TEXT NOT NULL CHECK (agent_type IN ('lender','borrower')),
+    strategy_prompt             TEXT NOT NULL,
+    strategy_json               TEXT NOT NULL DEFAULT '{}',
+    execution_interval_seconds  INTEGER NOT NULL DEFAULT 60 CHECK (execution_interval_seconds >= 10),
+    enabled_tools               TEXT NOT NULL DEFAULT '[]',
+    risk_tolerance              TEXT NOT NULL DEFAULT 'balanced',
+    profit_target_pct           NUMERIC(8,3) NOT NULL DEFAULT 4.000,
+    runtime_status              TEXT NOT NULL DEFAULT 'active'
+                                  CHECK (runtime_status IN ('active','paused','stopped')),
+    last_execution_at           TIMESTAMPTZ,
+    next_execution_at           TIMESTAMPTZ,
+    last_result_summary         TEXT,
+    total_cycles                INTEGER NOT NULL DEFAULT 0,
+    total_profit_usdc           NUMERIC(12,6) NOT NULL DEFAULT 0,
+    total_borrowed_usdc         NUMERIC(12,6) NOT NULL DEFAULT 0,
+    total_lent_usdc             NUMERIC(12,6) NOT NULL DEFAULT 0,
+    current_positions_json      TEXT NOT NULL DEFAULT '{}',
+    created_at                  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at                  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_agent_configs_runtime_status ON agent_configs(runtime_status, next_execution_at);
+
+CREATE TABLE IF NOT EXISTS agent_execution_logs (
+    log_id          BIGSERIAL PRIMARY KEY,
+    agent_id        UUID NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+    cycle_id        TEXT NOT NULL,
+    phase           TEXT NOT NULL,
+    level           TEXT NOT NULL DEFAULT 'info'
+                      CHECK (level IN ('debug','info','warn','error')),
+    message         TEXT NOT NULL,
+    tool_name       TEXT,
+    tool_input      TEXT,
+    tool_output     TEXT,
+    metadata_json   TEXT,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_agent_execution_logs_agent ON agent_execution_logs(agent_id, created_at DESC);
 
 -- ─── Lend orderbook ───────────────────────────────────────────────────────────
 

@@ -26,3 +26,5 @@ test_errors.node.txt
 ui-playwright-result.pngPeosFi/
 AgentCreditScore.sol
 AgentFiCreditScore.sol
+
+.localdb
