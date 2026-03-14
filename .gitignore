@@ -23,4 +23,6 @@ frontend/.env.local
 test_errors.txt
 ts_errors.txt
 test_errors.node.txt
-ui-playwright-result.png
+ui-playwright-result.pngPeosFi/
+AgentCreditScore.sol
+AgentFiCreditScore.sol
