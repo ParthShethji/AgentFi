@@ -25,7 +25,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/20</span>
+                <span class='fraction'>0/25</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/20</span>
+                <span class='fraction'>0/25</span>
             </div>
         
             
@@ -95,16 +95,11 @@
 <a name='L30'></a><a href='#L30'>30</a>
 <a name='L31'></a><a href='#L31'>31</a>
 <a name='L32'></a><a href='#L32'>32</a>
-<a name='L33'></a><a href='#L33'>33</a></td><td class="line-coverage quiet"><span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a></td><td class="line-coverage quiet"><span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -113,6 +108,16 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -123,15 +128,19 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js"><span class="cstat-no" title="statement not covered" >import express from "express";</span>
-<span class="cstat-no" title="statement not covered" >import dotenv from "dotenv";</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js"><span class="cstat-no" title="statement not covered" >import "dotenv/config";</span>
+<span class="cstat-no" title="statement not covered" >import express from "express";</span>
 <span class="cstat-no" title="statement not covered" >import lendingRoutes = require("./lending.routes");</span>
-&nbsp;
-<span class="cstat-no" title="statement not covered" >dotenv.config();</span>
+<span class="cstat-no" title="statement not covered" >import platformRoutes = require("./platform.routes");</span>
+<span class="cstat-no" title="statement not covered" >import fileverseRoutes = require("./fileverse.routes");</span>
+<span class="cstat-no" title="statement not covered" >import elsaRoutes = require("./elsa.routes");</span>
 &nbsp;
 const app = <span class="cstat-no" title="statement not covered" >express();</span>
 const port = <span class="cstat-no" title="statement not covered" >Number(process.env.PORT || 3000);</span>
@@ -155,6 +164,9 @@ const frontendOrigin = <span class="cstat-no" title="statement not covered" >pro
 });
 &nbsp;
 <span class="cstat-no" title="statement not covered" >app.use("/lending", lendingRoutes);</span>
+<span class="cstat-no" title="statement not covered" >app.use("/platform", platformRoutes);</span>
+<span class="cstat-no" title="statement not covered" >app.use("/fileverse", fileverseRoutes);</span>
+<span class="cstat-no" title="statement not covered" >app.use("/elsa", elsaRoutes);</span>
 &nbsp;
 <span class="cstat-no" title="statement not covered" >app.listen(port, <span class="fstat-no" title="function not covered" >() =</span>&gt; {</span>
 <span class="cstat-no" title="statement not covered" >  console.log(`[api] AgentFi backend running on port ${port}`);</span>
@@ -166,7 +178,7 @@ const frontendOrigin = <span class="cstat-no" title="statement not covered" >pro
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-03-13T23:53:10.539Z
+                at 2026-03-14T02:22:44.856Z
             </div>
         <script src="prettify.js"></script>
         <script>

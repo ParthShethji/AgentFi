@@ -5,6 +5,7 @@
  */
 
 import * as blockchain from "./blockchain.service";
+import { ethers } from "ethers";
 // @ts-ignore
 const db = require("./config/db");
 // @ts-ignore
@@ -39,14 +40,20 @@ export function calculateInterest(principalUsdc: number, borrowerRep: number) {
 
 export async function assertDifferentOwners(borrowerAgentId: string, lenderAgentId: string) {
   const { rows } = await db.query(
-    `SELECT agent_id, user_id FROM agents WHERE agent_id = ANY($1)`,
-    [[borrowerAgentId, lenderAgentId]]
+    `SELECT agent_id::text AS agent_id, user_id::text AS user_id
+     FROM agents
+     WHERE agent_id = $1 OR agent_id = $2`,
+    [borrowerAgentId, lenderAgentId]
   );
 
   if (rows.length < 2) throw new Error("One or both agents not found");
 
-  const borrowerRow = rows.find((r: any) => r.agent_id === borrowerAgentId);
-  const lenderRow   = rows.find((r: any) => r.agent_id === lenderAgentId);
+  const borrowerId = borrowerAgentId.toLowerCase();
+  const lenderId = lenderAgentId.toLowerCase();
+  const borrowerRow = rows.find((r: any) => String(r.agent_id).toLowerCase() === borrowerId);
+  const lenderRow   = rows.find((r: any) => String(r.agent_id).toLowerCase() === lenderId);
+
+  if (!borrowerRow || !lenderRow) throw new Error("One or both agents not found");
 
   if (borrowerRow.user_id === lenderRow.user_id) {
     throw new Error(
@@ -128,10 +135,21 @@ export async function postLendOffer({ lenderAgentId, maxAmountUsdc, minRepRequir
   const lender = await getAgentById(lenderAgentId);
   if (lender.role !== "lender") throw new Error("Agent is not a lender");
   if (lender.status !== "active") throw new Error("Lender agent is not active");
+  await blockchain.ensureAgentRegistered(lender.wallet_address, lender.reputation_score || 35);
 
+  // Auto-mint + auto-approve for demo (MockERC20 on local hardhat)
   const allowance = await blockchain.checkAllowance(lender.wallet_address);
   if (allowance < maxAmountUsdc) {
-    throw new Error(`Lender must approve contract before posting offer.`);
+    const { getAgentPrivateKey } = require("./config/agentKeys");
+    const privateKey = getAgentPrivateKey(lender.wallet_address);
+    if (privateKey) {
+      logger.info(`[lending] auto-funding + minting ${maxAmountUsdc} USDC to lender ${lender.wallet_address}`);
+      await blockchain.fundEth(lender.wallet_address);
+      await blockchain.mintUsdc(lender.wallet_address, maxAmountUsdc);
+      await blockchain.approveUsdc(privateKey, maxAmountUsdc * 10);
+    } else {
+      throw new Error(`Lender must approve contract before posting offer. No private key available for auto-approve.`);
+    }
   }
 
   const { rows } = await db.query(
@@ -169,6 +187,7 @@ export async function requestBorrow({ borrowerAgentId, requestedAmountUsdc }: an
   const borrower = await getAgentById(borrowerAgentId);
   if (borrower.role !== "borrower") throw new Error("Agent is not a borrower");
   if (borrower.status !== "active") throw new Error("Borrower agent is not active");
+  await blockchain.ensureAgentRegistered(borrower.wallet_address, borrower.reputation_score || 25);
 
   const repData = await blockchain.getAgentRep(borrower.wallet_address);
   const maxLoan = await blockchain.getMaxLoanSize(borrower.wallet_address);
@@ -237,6 +256,19 @@ async function _executeMatch({ borrower, repData, requestedAmountUsdc }: any) {
   const offer = offers[0];
   await assertDifferentOwners(borrower.agent_id, offer.lender_agent_id);
 
+  if (!ethers.isAddress(borrower.wallet_address)) {
+    throw new Error(
+      `Invalid borrower wallet_address for agent ${borrower.agent_id}: ${borrower.wallet_address}`
+    );
+  }
+  if (!ethers.isAddress(offer.lender_wallet)) {
+    throw new Error(
+      `Invalid lender wallet_address for agent ${offer.lender_agent_id}: ${offer.lender_wallet}`
+    );
+  }
+
+  await blockchain.ensureAgentRegistered(offer.lender_wallet, 35);
+
   const { interestUsdc, ratePct } = calculateInterest(requestedAmountUsdc, repData.score);
 
   const requestResult = await blockchain.requestLoan({
@@ -253,11 +285,18 @@ async function _executeMatch({ borrower, repData, requestedAmountUsdc }: any) {
   await db.query(`UPDATE lend_offers SET status='filled' WHERE offer_id = $1`, [offer.offer_id]);
 
   const { rows: matchRows } = await db.query(
-    `INSERT INTO matches (lender_agent_id, borrower_agent_id, amount_usdc, interest_usdc, rate_pct, collateral_usdc, loan_id_onchain, status, funded_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NOW())
+    `INSERT INTO matches (lender_agent_id, borrower_agent_id, amount_usdc, interest_usdc, rate_pct, collateral_usdc, borrower_rep_at_origination, loan_id_onchain, status, funded_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', NOW())
      RETURNING match_id`,
     [
-      offer.lender_agent_id, borrower.agent_id, requestedAmountUsdc, interestUsdc, ratePct, requestResult.collateralLocked, requestResult.loanId,
+      offer.lender_agent_id,
+      borrower.agent_id,
+      requestedAmountUsdc,
+      interestUsdc,
+      ratePct,
+      requestResult.collateralLocked,
+      repData.score,
+      requestResult.loanId,
     ]
   );
   const matchId = matchRows[0].match_id;

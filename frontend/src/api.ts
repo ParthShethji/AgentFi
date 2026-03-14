@@ -1,6 +1,19 @@
-type HttpMethod = "GET" | "POST" | "DELETE";
+type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 export type ApiClient = {
+  createUser(payload: {
+    email: string;
+    walletAddress?: string;
+  }): Promise<unknown>;
+  createAgent(payload: {
+    userId: string;
+    role: "lender" | "borrower";
+    username: string;
+    ensName?: string;
+    initialScore?: number;
+    strategy?: Record<string, unknown>;
+  }): Promise<unknown>;
+  updateAgentStrategy(agentId: string, strategy: Record<string, unknown>): Promise<unknown>;
   getOffers(minRep: number, maxAmount: number): Promise<unknown>;
   postOffer(payload: {
     lenderAgentId: string;
@@ -49,6 +62,15 @@ async function callApi(baseUrl: string, token: string, method: HttpMethod, path:
 
 export function createApiClient(baseUrl: string, token: string): ApiClient {
   return {
+    createUser(payload) {
+      return callApi(baseUrl, token, "POST", "/platform/users", payload);
+    },
+    createAgent(payload) {
+      return callApi(baseUrl, token, "POST", "/platform/agents", payload);
+    },
+    updateAgentStrategy(agentId, strategy) {
+      return callApi(baseUrl, token, "PUT", `/platform/agents/${encodeURIComponent(agentId)}/strategy`, strategy);
+    },
     getOffers(minRep, maxAmount) {
       return callApi(baseUrl, token, "GET", `/lending/offers?minRep=${minRep}&maxAmount=${maxAmount}`);
     },

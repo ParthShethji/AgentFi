@@ -1,8 +1,9 @@
+import "dotenv/config";
 import express from "express";
-import dotenv from "dotenv";
 import lendingRoutes = require("./lending.routes");
-
-dotenv.config();
+import platformRoutes = require("./platform.routes");
+import fileverseRoutes = require("./fileverse.routes");
+import elsaRoutes = require("./elsa.routes");
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -26,6 +27,9 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/lending", lendingRoutes);
+app.use("/platform", platformRoutes);
+app.use("/fileverse", fileverseRoutes);
+app.use("/elsa", elsaRoutes);
 
 app.listen(port, () => {
   console.log(`[api] AgentFi backend running on port ${port}`);

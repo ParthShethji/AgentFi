@@ -21,6 +21,7 @@ jest.mock("../config/redis", () => {
 });
 
 jest.mock("../blockchain.service", () => ({
+  ensureAgentRegistered: jest.fn(),
   checkAllowance: jest.fn(),
   checkBalance: jest.fn(),
   getAgentRep: jest.fn(),
@@ -88,11 +89,17 @@ describe("Lending Service", () => {
         // Return valid lender
         if (str.includes("FROM lend_offers lo")) {
           return Promise.resolve({
-            rows: [{ offer_id: 1, lender_agent_id: "agentL1", lender_wallet: "0xLW", lender_ens: "lw.eth", user_id: "user1" }]
+            rows: [{
+              offer_id: 1,
+              lender_agent_id: "agentL1",
+              lender_wallet: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+              lender_ens: "lw.eth",
+              user_id: "user1"
+            }]
           });
         }
         // Assert different owners mock
-        if (str.includes("FROM agents WHERE agent_id = ANY")) {
+        if (str.includes("FROM agents") && (str.includes("agent_id = ANY") || str.includes("agent_id = $1 OR agent_id = $2"))) {
           return Promise.resolve({
             rows: [{ agent_id: "agentB", user_id: "user2" }, { agent_id: "agentL1", user_id: "user1" }] // Diff owners
           });
@@ -110,7 +117,14 @@ describe("Lending Service", () => {
       (redis.get as jest.Mock).mockResolvedValueOnce(null);
 
       // Call inner method or full request flow.
-      (db.query as jest.Mock).mockResolvedValueOnce({ rows: [{ role: "borrower", status: "active", wallet_address: "0xBW", agent_id: "agentB" }] });
+      (db.query as jest.Mock).mockResolvedValueOnce({
+        rows: [{
+          role: "borrower",
+          status: "active",
+          wallet_address: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+          agent_id: "agentB"
+        }]
+      });
       (blockchain.getAgentRep as jest.Mock).mockResolvedValueOnce({ score: 35 });
       (blockchain.getMaxLoanSize as jest.Mock).mockResolvedValueOnce(1000);
 

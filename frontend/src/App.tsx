@@ -8,6 +8,26 @@ export default function App() {
   const [authToken, setAuthToken] = useState("");
   const [output, setOutput] = useState("Ready");
   const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState("user@test.com");
+  const [userId, setUserId] = useState("");
+  const [username, setUsername] = useState("alice");
+  const [agentRole, setAgentRole] = useState<"lender" | "borrower">("lender");
+  const [initialScore, setInitialScore] = useState(25);
+  const [targetAgentId, setTargetAgentId] = useState("");
+  const [strategyJson, setStrategyJson] = useState(
+    JSON.stringify(
+      {
+        maxLoanAmount: 500,
+        minReputation: 25,
+        interestRate: 2.0,
+        tradeAllocation: { ETH: 60, stablecoin: 40 },
+        repayAfterSeconds: 30,
+        signals: [],
+      },
+      null,
+      2
+    )
+  );
 
   const [minRep, setMinRep] = useState(25);
   const [maxAmount, setMaxAmount] = useState(1000);
@@ -73,6 +93,105 @@ export default function App() {
             />
           </label>
         </div>
+      </section>
+
+      <section className="card">
+        <h2>Onboarding</h2>
+        <form
+          onSubmit={onSubmit(
+            async () => {
+              const result = (await api.createUser({ email })) as { userId?: string };
+              if (result?.userId) setUserId(result.userId);
+              return result;
+            },
+            "POST /platform/users"
+          )}
+        >
+          <div className="grid">
+            <label>
+              User email
+              <input value={email} onChange={(event) => setEmail(event.target.value)} required />
+            </label>
+            <label>
+              User ID (auto after create)
+              <input value={userId} onChange={(event) => setUserId(event.target.value)} />
+            </label>
+          </div>
+          <button disabled={loading} type="submit">
+            Create User
+          </button>
+        </form>
+
+        <form
+          onSubmit={onSubmit(
+            async () => {
+              const strategy = JSON.parse(strategyJson);
+              const result = (await api.createAgent({
+                userId,
+                role: agentRole,
+                username,
+                initialScore,
+                strategy,
+              })) as { agentId?: string; role?: string };
+              if (result?.agentId && result?.role === "lender") setLenderAgentId(result.agentId);
+              if (result?.agentId && result?.role === "borrower") setBorrowerAgentId(result.agentId);
+              if (result?.agentId) setTargetAgentId(result.agentId);
+              return result;
+            },
+            "POST /platform/agents"
+          )}
+        >
+          <div className="grid">
+            <label>
+              Username
+              <input value={username} onChange={(event) => setUsername(event.target.value)} required />
+            </label>
+            <label>
+              Agent role
+              <select value={agentRole} onChange={(event) => setAgentRole(event.target.value as "lender" | "borrower")}>
+                <option value="lender">lender</option>
+                <option value="borrower">borrower</option>
+              </select>
+            </label>
+            <label>
+              Initial score
+              <input
+                type="number"
+                min={0}
+                max={35}
+                value={initialScore}
+                onChange={(event) => setInitialScore(Number(event.target.value))}
+              />
+            </label>
+          </div>
+          <label>
+            Strategy JSON
+            <textarea value={strategyJson} onChange={(event) => setStrategyJson(event.target.value)} rows={8} />
+          </label>
+          <button disabled={loading} type="submit">
+            Create Agent (On-chain registerAgent)
+          </button>
+        </form>
+
+        <form
+          onSubmit={onSubmit(
+            async () => {
+              const strategy = JSON.parse(strategyJson);
+              return api.updateAgentStrategy(targetAgentId, strategy);
+            },
+            "PUT /platform/agents/:agentId/strategy"
+          )}
+        >
+          <div className="grid">
+            <label>
+              Target agentId
+              <input value={targetAgentId} onChange={(event) => setTargetAgentId(event.target.value)} required />
+            </label>
+          </div>
+          <button disabled={loading} type="submit">
+            Update Strategy
+          </button>
+        </form>
       </section>
 
       <section className="card">

@@ -6,6 +6,7 @@
  */
 
 import { ethers, Contract, JsonRpcProvider, Wallet } from "ethers";
+import { getAgentPrivateKey } from "./config/agentKeys";
 
 function loadAbi() {
   if (process.env.NODE_ENV === "test") {
@@ -38,20 +39,55 @@ const provider = new JsonRpcProvider(process.env.RPC_URL || ""); // Base Sepolia
 
 const platformWallet = new Wallet(process.env.PLATFORM_PRIVATE_KEY || "0x0123456789012345678901234567890123456789012345678901234567890123", provider);
 
+// Deployer wallet (account #0) — owns MockERC20 and can mint
+const deployerWallet = new Wallet(process.env.DEPLOYER_PRIVATE_KEY || process.env.PLATFORM_PRIVATE_KEY || "0x0123456789012345678901234567890123456789012345678901234567890123", provider);
+
 const contract = new Contract(
   process.env.CONTRACT_ADDRESS || ethers.ZeroAddress,
   ABI,
   platformWallet
 );
 
-// USDC contract 
+// USDC contract (MockERC20 with mint for demo)
 const USDC_ABI = [
   "function allowance(address owner, address spender) view returns (uint256)",
   "function balanceOf(address account) view returns (uint256)",
+  "function mint(address to, uint256 amount)",
+  "function approve(address spender, uint256 amount) returns (bool)",
 ];
-const usdc = new Contract(process.env.USDC_ADDRESS || ethers.ZeroAddress, USDC_ABI, provider);
+// Connect to deployerWallet so mint() (onlyOwner) works
+const usdc = new Contract(process.env.USDC_ADDRESS || ethers.ZeroAddress, USDC_ABI, deployerWallet);
 
 const USDC_DECIMALS = 6n;
+
+// ─── Sequential Queues for Nonce Safety ──────────────────────────────────────
+
+type WalletType = "platform" | "deployer";
+
+// Map to hold the last transaction promise for each critical shared account.
+// This prevents multiple transactions from fetching the same nonce in parallel.
+const queues: Record<WalletType, Promise<any>> = {
+  platform: Promise.resolve(),
+  deployer: Promise.resolve(),
+};
+
+/**
+ * Enqueues a transaction action to be executed sequentially for a given wallet type.
+ */
+async function enqueue<T>(type: WalletType, action: () => Promise<T>): Promise<T> {
+  const previous = queues[type];
+  const next = (async () => {
+    try {
+      await previous;
+    } catch (err) {
+      // Don't let previous failures block the queue indefinitely, 
+      // but log them if they were non-deterministic.
+    }
+    return action();
+  })();
+  queues[type] = next;
+  return next;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -76,19 +112,75 @@ async function waitForTx(txPromise: Promise<any>, label: string) {
   };
 }
 
+function isNonceError(error: any) {
+  const msg = String(error?.message || "").toLowerCase();
+  return (
+    msg.includes("nonce too low") ||
+    msg.includes("replacement transaction underpriced") ||
+    msg.includes("already known")
+  );
+}
+
+async function assertBytecodePresent(address: string, label: string) {
+  if (process.env.NODE_ENV === "test") return;
+  const code = await provider.getCode(address);
+  if (!code || code === "0x") {
+    const rpc = process.env.RPC_URL || "(missing RPC_URL)";
+    throw new Error(
+      `[chain-config] ${label} has no bytecode at ${address} on ${rpc}. ` +
+      `If you restarted local Hardhat node, run 'npm run deploy:localhost' and restart backend.`
+    );
+  }
+}
+
+async function waitForTxWithRetry(
+  createTx: () => Promise<any>,
+  label: string,
+  retries: number = 2
+) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await waitForTx(createTx(), label);
+    } catch (error) {
+      if (attempt < retries && isNonceError(error)) {
+        attempt += 1;
+        logger.warn(`[blockchain] ${label} nonce conflict, retry attempt=${attempt}`);
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 // ─── Registration ──────────────────────────────────────────────────────────────
 
 export async function registerAgent(agentWallet: string, initialScore: number) {
   logger.info(`[blockchain] registering agent ${agentWallet} score=${initialScore}`);
-  return waitForTx(
-    contract.registerAgent(agentWallet, initialScore),
-    `registerAgent(${agentWallet})`
+  return enqueue("platform", () =>
+    waitForTxWithRetry(
+      () => contract.registerAgent(agentWallet, initialScore),
+      `registerAgent(${agentWallet})`
+    )
   );
+}
+
+export async function ensureAgentRegistered(agentWallet: string, initialScore: number = 25) {
+  const rep = await getAgentRep(agentWallet);
+  if (rep.lastActivityAt > 0) {
+    return { alreadyRegistered: true, score: rep.score };
+  }
+
+  const safeScore = Math.max(0, Math.floor(initialScore || 25));
+  await registerAgent(agentWallet, safeScore);
+  return { alreadyRegistered: false, score: safeScore };
 }
 
 // ─── Reputation reads ─────────────────────────────────────────────────────────
 
 export async function getAgentRep(agentWallet: string) {
+  await assertBytecodePresent(process.env.CONTRACT_ADDRESS || ethers.ZeroAddress, "AgentFiLending");
   const rep = await contract.getAgentRep(agentWallet);
   return {
     score: Number(rep.score),
@@ -100,6 +192,7 @@ export async function getAgentRep(agentWallet: string) {
 }
 
 export async function getRequiredCollateral(borrowerWallet: string, principalUsdc: number) {
+  await assertBytecodePresent(process.env.CONTRACT_ADDRESS || ethers.ZeroAddress, "AgentFiLending");
   const collateral = await contract.requiredCollateral(
     borrowerWallet,
     toUsdc(principalUsdc)
@@ -108,19 +201,71 @@ export async function getRequiredCollateral(borrowerWallet: string, principalUsd
 }
 
 export async function getMaxLoanSize(borrowerWallet: string) {
+  await assertBytecodePresent(process.env.CONTRACT_ADDRESS || ethers.ZeroAddress, "AgentFiLending");
   const max = await contract.maxLoanSize(borrowerWallet);
   return fromUsdc(max);
 }
 
 export async function checkAllowance(ownerWallet: string) {
+  await assertBytecodePresent(process.env.USDC_ADDRESS || ethers.ZeroAddress, "MockUSDC");
   const spender = process.env.CONTRACT_ADDRESS || ethers.ZeroAddress;
   const allowance = await usdc.allowance(ownerWallet, spender);
   return fromUsdc(allowance);
 }
 
 export async function checkBalance(walletAddress: string) {
+  await assertBytecodePresent(process.env.USDC_ADDRESS || ethers.ZeroAddress, "MockUSDC");
   const balance = await usdc.balanceOf(walletAddress);
   return fromUsdc(balance);
+}
+
+/**
+ * Mint MockERC20 USDC to a wallet address.
+ * Only works when platformWallet is the MockERC20 owner (deployer account).
+ * For demo/hackathon use only.
+ */
+export async function mintUsdc(toAddress: string, amountUsdc: number) {
+  return enqueue("deployer", async () => {
+    const amount = toUsdc(amountUsdc);
+    const result = await waitForTxWithRetry(
+      () => usdc.mint(toAddress, amount),
+      `mintUsdc(${toAddress}, ${amountUsdc})`
+    );
+    logger.info(`[blockchain] minted ${amountUsdc} USDC to ${toAddress}`);
+    return result;
+  });
+}
+
+/**
+ * Approve the lending contract to spend USDC from a given wallet.
+ * Requires the wallet's private key.
+ */
+export async function approveUsdc(walletPrivateKey: string, amountUsdc: number) {
+  const wallet = new Wallet(walletPrivateKey, provider);
+  const usdcAsWallet = new Contract(process.env.USDC_ADDRESS || ethers.ZeroAddress, USDC_ABI, wallet);
+  const amount = toUsdc(amountUsdc);
+  const tx = await usdcAsWallet.approve(process.env.CONTRACT_ADDRESS || ethers.ZeroAddress, amount);
+  await tx.wait(1);
+  logger.info(`[blockchain] approved ${amountUsdc} USDC from ${wallet.address}`);
+}
+
+/**
+ * Send ETH from the deployer wallet to an agent wallet for gas.
+ * For demo/hackathon use only.
+ */
+export async function fundEth(toAddress: string, amountEth: string = "1.0") {
+  return enqueue("deployer", async () => {
+    const result = await waitForTxWithRetry(
+      () =>
+        deployerWallet.sendTransaction({
+          to: toAddress,
+          value: ethers.parseEther(amountEth),
+        }),
+      `fundEth(${toAddress}, ${amountEth})`
+    );
+    logger.info(`[blockchain] funded ${amountEth} ETH to ${toAddress}`);
+    return result;
+  });
 }
 
 // ─── Loan lifecycle ───────────────────────────────────────────────────────────
@@ -170,16 +315,19 @@ export async function requestLoan({
 
   logger.info(`[blockchain] requestLoan borrower=${borrowerWallet} lender=${lenderWallet}`);
 
-  const result = await waitForTx(
-    contract.requestLoan(
-      borrowerWallet,
-      lenderWallet,
-      principalBig,
-      interestBig,
-      borrowerEnsHash,
-      lenderEnsHash
-    ),
-    "requestLoan"
+  const result = await enqueue("platform", () =>
+    waitForTxWithRetry(
+      () =>
+        contract.requestLoan(
+          borrowerWallet,
+          lenderWallet,
+          principalBig,
+          interestBig,
+          borrowerEnsHash,
+          lenderEnsHash
+        ),
+      "requestLoan"
+    )
   );
 
   const receipt = await provider.getTransactionReceipt(result.txHash);
@@ -195,7 +343,9 @@ export async function requestLoan({
 
 export async function fundLoan(loanId: number) {
   logger.info(`[blockchain] fundLoan loanId=${loanId}`);
-  return waitForTx(contract.fundLoan(loanId), `fundLoan(${loanId})`);
+  return enqueue("platform", () => 
+    waitForTxWithRetry(() => contract.fundLoan(loanId), `fundLoan(${loanId})`)
+  );
 }
 
 export async function repayLoan(loanId: number, borrowerWallet: string, profitGeneratedUsdc: number) {
@@ -208,9 +358,17 @@ export async function repayLoan(loanId: number, borrowerWallet: string, profitGe
   }
 
   const profitBig = toUsdc(profitGeneratedUsdc || 0);
+  const privateKey =
+    process.env[`AGENT_KEY_${borrowerWallet.toLowerCase()}`] ||
+    process.env.AGENT_PRIVATE_KEY ||
+    getAgentPrivateKey(borrowerWallet);
+
+  if (!privateKey) {
+    throw new Error(`Borrower private key not found for wallet ${borrowerWallet}`);
+  }
 
   const borrowerContract = contract.connect(
-    new Wallet(process.env[`AGENT_KEY_${borrowerWallet.toLowerCase()}`] || "", provider)
+    new Wallet(privateKey, provider)
   ) as Contract;
 
   return waitForTx(
@@ -221,15 +379,27 @@ export async function repayLoan(loanId: number, borrowerWallet: string, profitGe
 
 export async function repayPartial(loanId: number, borrowerWallet: string, partialAmountUsdc: number) {
   logger.info(`[blockchain] repayPartial loanId=${loanId} partial=${partialAmountUsdc}`);
-  return waitForTx(contract.repayPartial(loanId, toUsdc(partialAmountUsdc)), `repayPartial(${loanId})`);
+  return enqueue("platform", () =>
+    waitForTxWithRetry(
+      () => contract.repayPartial(loanId, toUsdc(partialAmountUsdc)),
+      `repayPartial(${loanId})`
+    )
+  );
 }
 
 export async function liquidateLoan(loanId: number) {
-  return waitForTx(contract.liquidateLoan(loanId), `liquidateLoan(${loanId})`);
+  return enqueue("platform", () =>
+    waitForTxWithRetry(() => contract.liquidateLoan(loanId), `liquidateLoan(${loanId})`)
+  );
 }
 
 export async function setReputation(agentWallet: string, newScore: number, reason: string) {
-  return waitForTx(contract.setReputation(agentWallet, newScore, reason), `setReputation(${agentWallet})`);
+  return enqueue("platform", () =>
+    waitForTxWithRetry(
+      () => contract.setReputation(agentWallet, newScore, reason),
+      `setReputation(${agentWallet})`
+    )
+  );
 }
 
 export async function getLoan(loanId: number) {

@@ -1,62 +1,131 @@
 # AgentFi Lending Platform
 
-Backend and smart-contract core for the AgentFi multi-agent lending marketplace, plus a connected React frontend console.
+AgentFi is a **multi-agent P2P lending marketplace** where AI agents autonomously borrow capital, deploy it via quantitative trading strategies, and repay with profit.
 
-## Project Structure
+## Project Overview
 
-- `contracts/` smart contracts for reputation-aware lending.
-- `test/` Jest backend tests and Hardhat contract tests.
-- `lending.routes.ts` API surface for offers, borrow, repay, loan lookup, and reputation lookup.
-- `frontend/` React + Vite frontend connected to current `/lending/*` API endpoints.
+- **Agent Identity**: Each agent is an ENS subdomain under `agentfi.eth`.
+- **Wallet Model**: 2-of-2 multisig hot wallet (Agent key + Platform co-signer key).
+- **Reputation System**: Rep-based loan terms and collateral requirements (0-50 scale).
+- **Matching Engine**: Platform acts as a market maker, matching lender offers with borrower requests.
 
-## Run Backend Tests
+---
+
+## 📂 Project Structure
+
+- `contracts/`: Solidity smart contracts for reputation-aware lending.
+- `scripts/`: Deployment and demo seeding scripts.
+- `test/`: Hardhat contract tests and Jest backend tests.
+- `frontend/`: React + Vite dashboard for managing agents and monitoring loans.
+- `blockchain.service.ts`: Ethers.js integration for talking to the chain.
+- `lending.service.ts`: Core business logic for matching and loan management.
+- `server.ts`: Express API entry point.
+
+---
+
+## 🛠️ Getting Started
+
+### Prerequisites
+
+- **Node.js** (v18+)
+- **npm**
+- **Git**
+- **PostgreSQL** & **Redis** (Optional: the backend uses `pg-mem` and in-memory mocks if credentials are missing).
+
+### 1. Installation
+
+Install root and frontend dependencies:
 
 ```bash
-npm run test:backend
-npm run test:contract
+npm install
+npm --prefix frontend install
 ```
 
-## Run Backend API
+### 2. Project Configuration
+
+Copy the example environment files:
 
 ```bash
-npm run dev:backend
+# Backend
+cp .env.example .env
+
+# Frontend
+cp frontend/.env.example frontend/.env
 ```
 
-Health check:
+### 3. Smart Contract Deployment (Local)
+
+Start a local Hardhat node in a separate terminal:
 
 ```bash
-http://localhost:3000/health
+npx hardhat node
 ```
 
-## Demo Agent IDs
+Deploy the contracts to the local network (this updates your `.env` automatically):
 
-Seed file: `demo_seed.sql`
+```bash
+npm run deploy:localhost
+```
 
-- Lender `agent_id`: `22222222-2222-2222-2222-222222222222`
-- Borrower `agent_id`: `44444444-4444-4444-4444-444444444444`
+### 4. Seed Demo Data
 
-No-manual-SQL seeding:
+Populate the database with initial agents and users:
 
 ```bash
 npm run seed:demo
 ```
 
-## Run Frontend
+---
 
-1. Install frontend dependencies:
+## 🚀 Running the Application
 
-```bash
-npm --prefix frontend install
-```
-
-2. Configure API base URL:
+### Start the Backend
 
 ```bash
-copy frontend\\.env.example frontend\\.env
+npm run dev:backend
 ```
 
-3. Start frontend dev server:
+- **Health Check**: `http://localhost:3000/health`
+
+### Start the Frontend
 
 ```bash
 npm run frontend:dev
 ```
+
+- **Dashbaord**: `http://localhost:5173`
+
+---
+
+## 🧪 Testing
+
+### Contract Tests
+
+```bash
+npm run test:contract
+```
+
+### Backend API Tests
+
+```bash
+npm run test:backend
+```
+
+---
+
+## 🌐 Testnet Runbook (Base Sepolia)
+
+1. Set `RPC_URL`, `PLATFORM_PRIVATE_KEY`, and `ENS_DEPLOYER_KEY` in `.env`.
+2. Deploy to Base Sepolia: `npm run deploy:base-sepolia`.
+3. Fund the generated agent wallets with test USDC and ETH.
+4. Use the frontend "Onboarding" section to register agents.
+
+## 📜 Key Scripts
+
+| Command | Description |
+|---|---|
+| `npm run dev:backend` | Starts the Express server with `ts-node`. |
+| `npm run deploy:localhost` | Deploys contracts and updates `.env`. |
+| `npm run seed:demo` | Seeds local DB with demo agents. |
+| `npm run frontend:dev` | Starts the Vite dev server for React. |
+| `npm run test:backend` | Runs the Jest test suite. |

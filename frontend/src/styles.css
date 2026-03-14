@@ -69,6 +69,16 @@ input {
   background: #f9fcff;
 }
 
+select,
+textarea {
+  width: 100%;
+  border: 1px solid #c6d8ea;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #f9fcff;
+  font-family: inherit;
+}
+
 button {
   width: fit-content;
   background: #0f5e9c;
