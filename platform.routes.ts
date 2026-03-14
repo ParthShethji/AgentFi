@@ -4,6 +4,7 @@ import { ethers } from "ethers";
 import * as blockchain from "./blockchain.service";
 import { setAgentPrivateKey } from "./config/agentKeys";
 import { putStrategyDoc } from "./utils/strategyStore";
+import { writeEnsTextRecord } from "./blockchain.service";
 // @ts-ignore
 const db = require("./config/db");
 
@@ -77,7 +78,21 @@ router.post("/agents", async (req, res) => {
     setAgentPrivateKey(agentWallet.address, agentWallet.privateKey);
     putStrategyDoc(docId, strategy);
 
-    const registerTx = await blockchain.registerAgent(agentWallet.address, Number(initialScore));
+    const registerTx = await blockchain.registerAgent(agentWallet.address, Number(initialScore), resolvedEns);
+
+    // Write ENSIP-25 text record so the userId is verifiable on-chain via the ENS resolver.
+    // Uses ENS_DEPLOYER_KEY (the platform's ENS controller key).
+    // Silently skipped when ENS_RESOLVER_ADDRESS is not configured (local Hardhat dev mode).
+    try {
+      const ensDeployerKey = process.env.ENS_DEPLOYER_KEY;
+      if (ensDeployerKey) {
+        await writeEnsTextRecord(resolvedEns, "agentfi.userId", userId, ensDeployerKey);
+      } else {
+        console.warn(`[platform] ENS_DEPLOYER_KEY not set — skipping ENSIP-25 text record for ${resolvedEns}`);
+      }
+    } catch (ensErr: any) {
+      console.warn(`[platform] writeEnsTextRecord failed (non-fatal): ${ensErr.message}`);
+    }
 
     // Auto-fund agent wallet with ETH for gas, then mint USDC and approve lending contract
     try {

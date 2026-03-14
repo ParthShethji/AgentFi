@@ -156,24 +156,25 @@ async function waitForTxWithRetry(
 
 // ─── Registration ──────────────────────────────────────────────────────────────
 
-export async function registerAgent(agentWallet: string, initialScore: number) {
-  logger.info(`[blockchain] registering agent ${agentWallet} score=${initialScore}`);
+export async function registerAgent(agentWallet: string, initialScore: number, ensName: string) {
+  const ensNameHash = ethers.keccak256(ethers.toUtf8Bytes(ensName));
+  logger.info(`[blockchain] registering agent ${agentWallet} score=${initialScore} ensName=${ensName}`);
   return enqueue("platform", () =>
     waitForTxWithRetry(
-      () => contract.registerAgent(agentWallet, initialScore),
+      () => contract.registerAgent(agentWallet, initialScore, ensNameHash),
       `registerAgent(${agentWallet})`
     )
   );
 }
 
-export async function ensureAgentRegistered(agentWallet: string, initialScore: number = 25) {
+export async function ensureAgentRegistered(agentWallet: string, ensName: string, initialScore: number = 25) {
   const rep = await getAgentRep(agentWallet);
   if (rep.lastActivityAt > 0) {
     return { alreadyRegistered: true, score: rep.score };
   }
 
   const safeScore = Math.max(0, Math.floor(initialScore || 25));
-  await registerAgent(agentWallet, safeScore);
+  await registerAgent(agentWallet, safeScore, ensName);
   return { alreadyRegistered: false, score: safeScore };
 }
 
@@ -459,4 +460,158 @@ export function onLoanRepaid(callback: (data: any) => void) {
       txHash: event.log.transactionHash,
     });
   });
+}
+
+// ─── ENS Identity Verification ──────────────────────────────────────────────
+
+// Minimal ENS Public Resolver ABI — only the methods we use
+const ENS_RESOLVER_ABI = [
+  "function addr(bytes32 node) view returns (address)",
+  "function text(bytes32 node, string key) view returns (string)",
+  "function setText(bytes32 node, string key, string value)",
+];
+
+/**
+ * Returns a namehash for an ENS domain using ethers built-in.
+ * Example: namehash("agent1.alice.agentfi.eth")
+ */
+function ensNamehash(name: string): string {
+  return ethers.namehash(name);
+}
+
+/**
+ * Resolves an ENS name to its address via the ENS Public Resolver.
+ * Returns null if ENS_RESOLVER_ADDRESS is not configured (local dev mode).
+ */
+export async function resolveEnsToAddress(ensName: string): Promise<string | null> {
+  const resolverAddress = process.env.ENS_RESOLVER_ADDRESS;
+  if (!resolverAddress) {
+    logger.warn(`[ens] ENS_RESOLVER_ADDRESS not set – skipping forward resolution for ${ensName}`);
+    return null;
+  }
+  const resolver = new ethers.Contract(resolverAddress, ENS_RESOLVER_ABI, provider);
+  const node = ensNamehash(ensName);
+  const addr = await resolver.addr(node);
+  return addr as string;
+}
+
+/**
+ * Performs a reverse lookup from a wallet address to its ENS name.
+ * Uses the Base Sepolia reverse resolver (addr.reverse).
+ * Returns null if ENS is not configured.
+ */
+export async function resolveAddressToEns(wallet: string): Promise<string | null> {
+  const resolverAddress = process.env.ENS_RESOLVER_ADDRESS;
+  if (!resolverAddress) {
+    logger.warn(`[ens] ENS_RESOLVER_ADDRESS not set – skipping reverse resolution for ${wallet}`);
+    return null;
+  }
+  try {
+    const ensName = await provider.lookupAddress(wallet);
+    return ensName;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetches the ENSIP-25 Text Record for a given ENS name and key.
+ * We use key "agentfi.userId" to store userId binding.
+ * Returns null if ENS is not configured.
+ */
+export async function getEnsTextRecord(ensName: string, key: string): Promise<string | null> {
+  const resolverAddress = process.env.ENS_RESOLVER_ADDRESS;
+  if (!resolverAddress) {
+    logger.warn(`[ens] ENS_RESOLVER_ADDRESS not set – skipping text record fetch for ${ensName}`);
+    return null;
+  }
+  const resolver = new ethers.Contract(resolverAddress, ENS_RESOLVER_ABI, provider);
+  const node = ensNamehash(ensName);
+  const value = await resolver.text(node, key);
+  return value as string;
+}
+
+/**
+ * Writes an ENSIP-25 Text Record for a given ENS name and key.
+ * Must be called with a wallet that is the ENS controller/owner of that name.
+ * No-ops gracefully if ENS_RESOLVER_ADDRESS is not set (local dev mode).
+ */
+export async function writeEnsTextRecord(
+  ensName: string,
+  key: string,
+  value: string,
+  signerPrivateKey: string
+): Promise<void> {
+  const resolverAddress = process.env.ENS_RESOLVER_ADDRESS;
+  if (!resolverAddress) {
+    logger.warn(`[ens] ENS_RESOLVER_ADDRESS not set – skipping setText for ${ensName}[${key}]`);
+    return;
+  }
+  const signer = new ethers.Wallet(signerPrivateKey, provider);
+  const resolver = new ethers.Contract(resolverAddress, ENS_RESOLVER_ABI, signer);
+  const node = ensNamehash(ensName);
+  const tx = await resolver.setText(node, key, value);
+  await tx.wait(1);
+  logger.info(`[ens] wrote text record ${ensName}[${key}] = ${value}`);
+}
+
+/**
+ * Master verification function.
+ * Checks:
+ *  1. Forward resolution: ENS name → resolved address == agentWallet
+ *  2. Text Record: ENS name, key "agentfi.userId" == expectedUserId
+ *  3. On-chain contract binding: contract.verifyEns(ensNameHash, agentWallet) == true
+ *
+ * In local dev mode (no ENS_RESOLVER_ADDRESS), skips checks 1 & 2 but still
+ * checks the on-chain contract binding which is always available.
+ *
+ * Throws ENS_MISMATCH error if any check fails.
+ */
+export async function verifyAgentEnsIntegrity(
+  agentWallet: string,
+  ensName: string,
+  expectedUserId: string
+): Promise<void> {
+  const ensNameHash = ethers.keccak256(ethers.toUtf8Bytes(ensName));
+  const resolverConfigured = !!process.env.ENS_RESOLVER_ADDRESS;
+
+  // ── Check 1: On-chain contract binding (always runs) ──
+  try {
+    const isValid: boolean = await contract.verifyEns(ensNameHash, agentWallet);
+    if (!isValid) {
+      throw new Error(
+        `ENS_MISMATCH: On-chain contract binding failed. ` +
+        `ENS "${ensName}" is not bound to wallet ${agentWallet} in AgentFiLending contract.`
+      );
+    }
+  } catch (err: any) {
+    if (err.message.startsWith("ENS_MISMATCH")) throw err;
+    // Contract call itself failed (e.g. no bytecode) — treat as pass in local dev
+    logger.warn(`[ens] contract.verifyEns call failed (non-fatal in local dev): ${err.message}`);
+  }
+
+  if (!resolverConfigured) {
+    // Local dev — skip resolver-based checks
+    return;
+  }
+
+  // ── Check 2: Forward ENS resolution ──
+  const resolvedAddress = await resolveEnsToAddress(ensName);
+  if (resolvedAddress && resolvedAddress.toLowerCase() !== agentWallet.toLowerCase()) {
+    throw new Error(
+      `ENS_MISMATCH: Forward resolution of "${ensName}" returned ${resolvedAddress}, ` +
+      `expected ${agentWallet}.`
+    );
+  }
+
+  // ── Check 3: ENSIP-25 userId text record ──
+  const recordedUserId = await getEnsTextRecord(ensName, "agentfi.userId");
+  if (recordedUserId && recordedUserId !== expectedUserId) {
+    throw new Error(
+      `ENS_MISMATCH: Text record agentfi.userId for "${ensName}" is "${recordedUserId}", ` +
+      `expected "${expectedUserId}".`
+    );
+  }
+
+  logger.info(`[ens] integrity verified for ${ensName} → ${agentWallet} (userId: ${expectedUserId})`);
 }

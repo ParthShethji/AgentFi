@@ -48,7 +48,8 @@ router.post("/offers", requireAuth, validate(postOfferSchema), async (req: Reque
     });
     res.json({ offerId });
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    const status = err.message.startsWith("ENS_MISMATCH") ? 403 : 400;
+    res.status(status).json({ error: err.message });
   }
 });
 
@@ -93,7 +94,8 @@ router.post("/borrow", requireAuth, validate(borrowSchema), async (req: Request,
     const result = await lending.requestBorrow({ borrowerAgentId, requestedAmountUsdc });
     res.json(result);
   } catch (err: any) {
-    const status = err.message.startsWith("SYBIL_BLOCK") ? 403 : 400;
+    let status = 400;
+    if (err.message.startsWith("SYBIL_BLOCK") || err.message.startsWith("ENS_MISMATCH")) status = 403;
     res.status(status).json({ error: err.message });
   }
 });

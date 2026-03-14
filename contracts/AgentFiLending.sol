@@ -59,6 +59,11 @@ contract AgentFiLending is Ownable, ReentrancyGuard {
     mapping(address => uint256[]) public agentLoansAsBorrower;
     mapping(address => uint256[]) public agentLoansAsLender;
 
+    // ENS identity bindings (set at registration, immutable)
+    // ensNameHash = keccak256(abi.encodePacked(ensName))
+    mapping(bytes32 => address) public ensNameToWallet;
+    mapping(address => bytes32) public walletToEnsName;
+
     // platform backend address — signs alongside agent key (2-of-2)
     address public platformSigner;
 
@@ -90,7 +95,7 @@ contract AgentFiLending is Ownable, ReentrancyGuard {
     event LoanDefaulted(uint256 indexed loanId, uint256 defaultedAt);
     event CollateralSeized(uint256 indexed loanId, address indexed lender, uint256 amount);
     event ReputationUpdated(address indexed agent, uint8 oldScore, uint8 newScore, string reason);
-    event AgentRegistered(address indexed agent, uint8 initialScore);
+    event AgentRegistered(address indexed agent, uint8 initialScore, bytes32 ensNameHash);
 
     // ─── Constructor ──────────────────────────────────────────────────────────
 
@@ -115,11 +120,15 @@ contract AgentFiLending is Ownable, ReentrancyGuard {
 
     /**
      * Called by platform when a new agent is created.
-     * Sets initial reputation score. Agent wallet must be the 2-of-2 multisig address.
+     * Sets initial reputation score and binds the ENS subdomain to the agent wallet.
+     * ensNameHash = keccak256(abi.encodePacked("agent1.alice.agentfi.eth")).
+     * Agent wallet must be the 2-of-2 multisig address.
      */
-    function registerAgent(address agent, uint8 initialScore) external onlyPlatform {
+    function registerAgent(address agent, uint8 initialScore, bytes32 ensNameHash) external onlyPlatform {
         require(agentRep[agent].lastActivityAt == 0, "AgentFi: already registered");
         require(initialScore <= REP_ZERO_COLLATERAL, "AgentFi: initial score too high");
+        require(ensNameHash != bytes32(0), "AgentFi: ensNameHash cannot be zero");
+        require(ensNameToWallet[ensNameHash] == address(0), "AgentFi: ENS name already registered");
 
         agentRep[agent] = AgentRep({
             score: initialScore,
@@ -129,7 +138,34 @@ contract AgentFiLending is Ownable, ReentrancyGuard {
             defaults: 0
         });
 
-        emit AgentRegistered(agent, initialScore);
+        // Bind ENS name hash ↔ wallet address on-chain
+        ensNameToWallet[ensNameHash] = agent;
+        walletToEnsName[agent] = ensNameHash;
+
+        emit AgentRegistered(agent, initialScore, ensNameHash);
+    }
+
+    /**
+     * Verify that a wallet address is bound to the given ENS name hash on-chain.
+     * Returns true only if both directions of the mapping agree.
+     * Callable by anyone — used by the backend and external auditors.
+     */
+    function verifyEns(bytes32 ensNameHash, address wallet) external view returns (bool) {
+        return ensNameToWallet[ensNameHash] == wallet && walletToEnsName[wallet] == ensNameHash;
+    }
+
+    /**
+     * Look up the wallet address for a given ENS name hash.
+     */
+    function walletForEns(bytes32 ensNameHash) external view returns (address) {
+        return ensNameToWallet[ensNameHash];
+    }
+
+    /**
+     * Look up the ENS name hash bound to a wallet.
+     */
+    function ensForWallet(address wallet) external view returns (bytes32) {
+        return walletToEnsName[wallet];
     }
 
     // ─── Reputation read helpers ───────────────────────────────────────────────

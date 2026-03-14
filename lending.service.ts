@@ -5,6 +5,7 @@
  */
 
 import * as blockchain from "./blockchain.service";
+import { verifyAgentEnsIntegrity } from "./blockchain.service";
 import { ethers } from "ethers";
 // @ts-ignore
 const db = require("./config/db");
@@ -135,7 +136,11 @@ export async function postLendOffer({ lenderAgentId, maxAmountUsdc, minRepRequir
   const lender = await getAgentById(lenderAgentId);
   if (lender.role !== "lender") throw new Error("Agent is not a lender");
   if (lender.status !== "active") throw new Error("Lender agent is not active");
-  await blockchain.ensureAgentRegistered(lender.wallet_address, lender.reputation_score || 35);
+
+  // ── ENS integrity: confirm this agent's ENS name is genuinely bound to this wallet ──
+  await verifyAgentEnsIntegrity(lender.wallet_address, lender.ens_name, lender.user_id);
+
+  await blockchain.ensureAgentRegistered(lender.wallet_address, lender.ens_name, lender.reputation_score || 35);
 
   // Auto-mint + auto-approve for demo (MockERC20 on local hardhat)
   const allowance = await blockchain.checkAllowance(lender.wallet_address);
@@ -187,7 +192,11 @@ export async function requestBorrow({ borrowerAgentId, requestedAmountUsdc }: an
   const borrower = await getAgentById(borrowerAgentId);
   if (borrower.role !== "borrower") throw new Error("Agent is not a borrower");
   if (borrower.status !== "active") throw new Error("Borrower agent is not active");
-  await blockchain.ensureAgentRegistered(borrower.wallet_address, borrower.reputation_score || 25);
+
+  // ── ENS integrity: confirm this agent's ENS name is genuinely bound to this wallet ──
+  await verifyAgentEnsIntegrity(borrower.wallet_address, borrower.ens_name, borrower.user_id);
+
+  await blockchain.ensureAgentRegistered(borrower.wallet_address, borrower.ens_name, borrower.reputation_score || 25);
 
   const repData = await blockchain.getAgentRep(borrower.wallet_address);
   const maxLoan = await blockchain.getMaxLoanSize(borrower.wallet_address);
@@ -267,7 +276,7 @@ async function _executeMatch({ borrower, repData, requestedAmountUsdc }: any) {
     );
   }
 
-  await blockchain.ensureAgentRegistered(offer.lender_wallet, 35);
+  await blockchain.ensureAgentRegistered(offer.lender_wallet, offer.lender_ens, 35);
 
   const { interestUsdc, ratePct } = calculateInterest(requestedAmountUsdc, repData.score);
 

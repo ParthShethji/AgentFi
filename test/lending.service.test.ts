@@ -22,6 +22,7 @@ jest.mock("../config/redis", () => {
 
 jest.mock("../blockchain.service", () => ({
   ensureAgentRegistered: jest.fn(),
+  verifyAgentEnsIntegrity: jest.fn(),
   checkAllowance: jest.fn(),
   checkBalance: jest.fn(),
   getAgentRep: jest.fn(),

@@ -9,6 +9,7 @@ describe("AgentFiLending", function () {
 
   const USDC_DECIMALS = 6n;
   const parseUsdc = (num: number | string) => ethers.parseUnits(num.toString(), Number(USDC_DECIMALS));
+  const dummyEns = ethers.encodeBytes32String("dummy.agentfi.eth");
 
   beforeEach(async function () {
     const signers = await ethers.getSigners();
@@ -34,27 +35,27 @@ describe("AgentFiLending", function () {
 
   describe("Agent Registration", function() {
     it("should allow platform to register an agent", async function() {
-      await lending.connect(platformSigner).registerAgent(borrower.address, 25);
+      await lending.connect(platformSigner).registerAgent(borrower.address, 25, dummyEns);
       const rep = await lending.getAgentRep(borrower.address);
       expect(rep.score).to.equal(25n);
     });
 
     it("should revert if registered by non-platform", async function() {
       await (expect(
-        lending.connect(owner).registerAgent(borrower.address, 25)
+        lending.connect(owner).registerAgent(borrower.address, 25, dummyEns)
       ) as any).to.be.revertedWith("AgentFi: caller is not platform");
     });
 
     it("should revert if initial rep is above 35", async function() {
       await (expect(
-        lending.connect(platformSigner).registerAgent(borrower.address, 36)
+        lending.connect(platformSigner).registerAgent(borrower.address, 36, dummyEns)
       ) as any).to.be.revertedWith("AgentFi: initial score too high");
     });
   });
 
   describe("Reputation Read Helpers", function() {
     beforeEach(async function() {
-      await lending.connect(platformSigner).registerAgent(borrower.address, 25);
+      await lending.connect(platformSigner).registerAgent(borrower.address, 25, dummyEns);
     });
 
     it("should calculate correct collateral for rep = 25", async function() {
@@ -78,8 +79,8 @@ describe("AgentFiLending", function () {
     const lEns = ethers.encodeBytes32String("lEns");
     
     beforeEach(async function() {
-      await lending.connect(platformSigner).registerAgent(borrower.address, 25);
-      await lending.connect(platformSigner).registerAgent(lender.address, 35);
+      await lending.connect(platformSigner).registerAgent(borrower.address, 25, dummyEns);
+      await lending.connect(platformSigner).registerAgent(lender.address, 35, ethers.encodeBytes32String("lenderEns"));
 
       const reqCollateral = await lending.requiredCollateral(borrower.address, principal);
       await usdc.connect(borrower).approve(lending.target, reqCollateral);
