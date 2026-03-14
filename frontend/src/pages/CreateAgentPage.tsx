@@ -6,6 +6,8 @@ import AmbientBackground from '../components/AmbientBackground';
 import { useApp } from '../context/AppContext';
 import { useApi } from '../context/ApiContext';
 import { formatAddress } from '../wallet/metamask';
+import { ensNodes } from '../api';
+import { createEnsSubdomain } from '../wallet/metamask';
 
 const STEP_LABELS = ['Name Agent', 'Choose Role', 'Rules', 'Launch'];
 
@@ -29,7 +31,7 @@ const variants = {
 
 export default function CreateAgentPage() {
   const navigate = useNavigate();
-  const { api } = useApi();
+  const { api, baseUrl } = useApi();
   const {
     userId,
     verifiedEnsName,
@@ -47,6 +49,7 @@ export default function CreateAgentPage() {
   const [strategy, setStrategy] = useState(LENDER_STRATEGY);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [creatingStep, setCreatingStep] = useState('');
 
   // Guard: redirect to connect wallet (step 0) if not connected, or to verification (step 1/2) if not verified
   useEffect(() => {
@@ -110,6 +113,9 @@ export default function CreateAgentPage() {
         signals: [] as string[],
         raw: strategy,
       };
+
+      // Step 1: Create agent on backend (generates wallet, registers on Base Sepolia)
+      setCreatingStep('[1/2] Creating agent on Base Sepolia...');
       const agentRes = await api.createAgent({
         userId: userId!,
         role: backendRole,
@@ -117,6 +123,27 @@ export default function CreateAgentPage() {
         initialScore: 25,
         strategy: strategyObj,
       });
+
+      // Step 2: Create ENS subdomain on Ethereum Sepolia via MetaMask
+      // Fetch node hashes from backend (avoids needing ethers in frontend)
+      setCreatingStep('[2/2] Creating ENS subdomain on Ethereum Sepolia...\nMetaMask will ask to switch networks, then prompt 2 txs.');
+      try {
+        const nodes = await ensNodes(baseUrl, verifiedEnsName!, subdomain);
+        await createEnsSubdomain({
+          parentEnsName: verifiedEnsName!,
+          label: subdomain,
+          agentWallet: agentRes.walletAddress,
+          userAddress: walletAddress!,
+          parentNode: nodes.parentNode,
+          subdomainNode: nodes.subdomainNode,
+          labelHash: nodes.labelHash,
+        });
+      } catch (ensErr: any) {
+        // ENS failure is non-fatal for the demo — agent is created, subdomain can be retried
+        console.warn('[ENS] Subdomain creation failed (non-fatal):', ensErr.message);
+        setLaunchError(`Agent created ✅ but ENS subdomain failed: ${ensErr.message}. You can retry later.`);
+      }
+
       setCreatedAgentId(agentRes.agentId);
       setCreatedAgentEnsName(agentRes.ensName);
       navigate('/dashboard');
@@ -124,6 +151,7 @@ export default function CreateAgentPage() {
       setLaunchError(err instanceof Error ? err.message : 'Failed to create agent');
     } finally {
       setCreating(false);
+      setCreatingStep('');
     }
   };
 
@@ -331,6 +359,7 @@ export default function CreateAgentPage() {
                   fullEnsName={fullEnsName}
                   role={role}
                   creating={creating}
+                  creatingStep={creatingStep}
                   launchError={launchError}
                   onLaunch={handleLaunch}
                   onCreateAnother={() => {
@@ -350,9 +379,9 @@ export default function CreateAgentPage() {
 }
 
 function LaunchView({
-  fullEnsName, role, creating, launchError, onLaunch, onCreateAnother,
+  fullEnsName, role, creating, creatingStep, launchError, onLaunch, onCreateAnother,
 }: {
-  fullEnsName: string; role: Role; creating: boolean; launchError: string | null;
+  fullEnsName: string; role: Role; creating: boolean; creatingStep: string; launchError: string | null;
   onLaunch: () => void; onCreateAnother: () => void;
 }) {
   const [pulseDone, setPulseDone] = useState(false);
@@ -407,8 +436,13 @@ function LaunchView({
           disabled={creating}
           id="launch-agent-btn"
         >
-          {creating ? 'Creating agent...' : 'Launch & View Dashboard →'}
+          {creating ? (creatingStep || 'Creating agent...') : 'Launch & View Dashboard →'}
         </button>
+        {creating && creatingStep && (
+          <p style={{ fontFamily: 'Inter', fontSize: 11, color: 'var(--text-tertiary)', textAlign: 'center', whiteSpace: 'pre-line', lineHeight: 1.6 }}>
+            {creatingStep}
+          </p>
+        )}
         <button
           className="btn btn-ghost btn-full"
           onClick={onCreateAnother}

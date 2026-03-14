@@ -9,7 +9,7 @@ const db = require("./config/db");
 
 const router = Router();
 
-// Public: resolve ENS name to address (used by onboarding before user exists). Base Sepolia.
+// Public: resolve ENS name to address (used by onboarding before user exists).
 router.get("/ens/resolve", async (req, res) => {
   const name = typeof req.query.name === "string" ? req.query.name.trim() : "";
   if (!name) {
@@ -20,6 +20,26 @@ router.get("/ens/resolve", async (req, res) => {
     return res.json({ address: address ?? null });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || "ENS resolution failed" });
+  }
+});
+
+// Public: compute ENS node hashes for a subdomain.
+// Frontend needs these to build the raw setSubnodeRecord + setAddr calldata
+// without needing ethers in the browser.
+// GET /platform/ens/nodes?parent=alice.eth&label=vault-1
+router.get("/ens/nodes", (req, res) => {
+  const parent = typeof req.query.parent === "string" ? req.query.parent.trim() : "";
+  const label  = typeof req.query.label  === "string" ? req.query.label.trim()  : "";
+  if (!parent || !label) {
+    return res.status(400).json({ error: "parent and label are required" });
+  }
+  try {
+    const parentNode    = ethers.namehash(parent);                                // namehash("alice.eth")
+    const labelHash     = ethers.keccak256(ethers.toUtf8Bytes(label));            // keccak256("vault-1")
+    const subdomainNode = ethers.namehash(`${label}.${parent}`);                  // namehash("vault-1.alice.eth")
+    return res.json({ parentNode, labelHash, subdomainNode });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
   }
 });
 

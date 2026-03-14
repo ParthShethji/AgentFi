@@ -132,3 +132,19 @@ export async function resolveEns(
   }
   return payload as { address: string | null };
 }
+
+/** Public (no auth): compute ENS node hashes for a subdomain — saves adding ethers to the browser. */
+export async function ensNodes(
+  baseUrl: string,
+  parent: string,
+  label: string
+): Promise<{ parentNode: string; labelHash: string; subdomainNode: string }> {
+  const url = `${baseUrl.replace(/\/$/, "")}/platform/ens/nodes?parent=${encodeURIComponent(parent)}&label=${encodeURIComponent(label)}`;
+  const response = await fetch(url);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = (payload as { error?: string }).error || "ENS node computation failed";
+    throw new Error(message);
+  }
+  return payload as { parentNode: string; labelHash: string; subdomainNode: string };
+}
