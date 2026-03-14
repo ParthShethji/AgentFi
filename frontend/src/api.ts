@@ -1,38 +1,36 @@
+import type {
+  CreateUserPayload,
+  CreateUserResponse,
+  CreateAgentPayload,
+  CreateAgentResponse,
+  GetOffersResponse,
+  PostOfferPayload,
+  PostOfferResponse,
+  GetBorrowQuoteResponse,
+  RequestBorrowPayload,
+  RequestBorrowResponse,
+  RepayPayload,
+  Loan,
+  GetAgentLoansResponse,
+  AgentRep,
+} from "./types/api";
+
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 export type ApiClient = {
-  createUser(payload: {
-    email: string;
-    walletAddress?: string;
-  }): Promise<unknown>;
-  createAgent(payload: {
-    userId: string;
-    role: "lender" | "borrower";
-    username: string;
-    ensName?: string;
-    initialScore?: number;
-    strategy?: Record<string, unknown>;
-  }): Promise<unknown>;
+  createUser(payload: CreateUserPayload): Promise<CreateUserResponse>;
+  createAgent(payload: CreateAgentPayload): Promise<CreateAgentResponse>;
   updateAgentStrategy(agentId: string, strategy: Record<string, unknown>): Promise<unknown>;
-  getOffers(minRep: number, maxAmount: number): Promise<unknown>;
-  postOffer(payload: {
-    lenderAgentId: string;
-    maxAmountUsdc: number;
-    minRepRequired: number;
-    ratePct: number;
-  }): Promise<unknown>;
-  getBorrowQuote(borrowerAgentId: string, amountUsdc: number): Promise<unknown>;
-  requestBorrow(payload: {
-    borrowerAgentId: string;
-    requestedAmountUsdc: number;
-  }): Promise<unknown>;
-  repay(payload: {
-    matchId: number;
-    borrowerAgentId: string;
-    profitGeneratedUsdc: number;
-  }): Promise<unknown>;
-  getLoan(loanId: number): Promise<unknown>;
-  getAgentRep(agentId: string): Promise<unknown>;
+  getOffers(minRep: number, maxAmount: number): Promise<GetOffersResponse>;
+  postOffer(payload: PostOfferPayload): Promise<PostOfferResponse>;
+  deleteOffer(offerId: number, lenderAgentId: string): Promise<{ message: string }>;
+  getBorrowQuote(borrowerAgentId: string, amountUsdc: number): Promise<GetBorrowQuoteResponse>;
+  requestBorrow(payload: RequestBorrowPayload): Promise<RequestBorrowResponse>;
+  approveBorrow(approvalId: number): Promise<RequestBorrowResponse>;
+  repay(payload: RepayPayload): Promise<unknown>;
+  getLoan(loanId: number): Promise<Loan>;
+  getAgentLoans(agentId: string, role?: "lender" | "borrower"): Promise<GetAgentLoansResponse>;
+  getAgentRep(agentId: string): Promise<AgentRep>;
 };
 
 function buildHeaders(token?: string) {
@@ -45,7 +43,13 @@ function buildHeaders(token?: string) {
   return headers;
 }
 
-async function callApi(baseUrl: string, token: string, method: HttpMethod, path: string, body?: unknown) {
+async function callApi<T>(
+  baseUrl: string,
+  token: string,
+  method: HttpMethod,
+  path: string,
+  body?: unknown
+): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers: buildHeaders(token),
@@ -57,28 +61,31 @@ async function callApi(baseUrl: string, token: string, method: HttpMethod, path:
     const message = (payload as { error?: string }).error || "Request failed";
     throw new Error(message);
   }
-  return payload;
+  return payload as T;
 }
 
 export function createApiClient(baseUrl: string, token: string): ApiClient {
   return {
     createUser(payload) {
-      return callApi(baseUrl, token, "POST", "/platform/users", payload);
+      return callApi<CreateUserResponse>(baseUrl, token, "POST", "/platform/users", payload);
     },
     createAgent(payload) {
-      return callApi(baseUrl, token, "POST", "/platform/agents", payload);
+      return callApi<CreateAgentResponse>(baseUrl, token, "POST", "/platform/agents", payload);
     },
     updateAgentStrategy(agentId, strategy) {
       return callApi(baseUrl, token, "PUT", `/platform/agents/${encodeURIComponent(agentId)}/strategy`, strategy);
     },
     getOffers(minRep, maxAmount) {
-      return callApi(baseUrl, token, "GET", `/lending/offers?minRep=${minRep}&maxAmount=${maxAmount}`);
+      return callApi<GetOffersResponse>(baseUrl, token, "GET", `/lending/offers?minRep=${minRep}&maxAmount=${maxAmount}`);
     },
     postOffer(payload) {
-      return callApi(baseUrl, token, "POST", "/lending/offers", payload);
+      return callApi<PostOfferResponse>(baseUrl, token, "POST", "/lending/offers", payload);
+    },
+    deleteOffer(offerId, lenderAgentId) {
+      return callApi<{ message: string }>(baseUrl, token, "DELETE", `/lending/offers/${offerId}`, { lenderAgentId });
     },
     getBorrowQuote(borrowerAgentId, amountUsdc) {
-      return callApi(
+      return callApi<GetBorrowQuoteResponse>(
         baseUrl,
         token,
         "GET",
@@ -86,16 +93,42 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
       );
     },
     requestBorrow(payload) {
-      return callApi(baseUrl, token, "POST", "/lending/borrow", payload);
+      return callApi<RequestBorrowResponse>(baseUrl, token, "POST", "/lending/borrow", payload);
+    },
+    approveBorrow(approvalId) {
+      return callApi<RequestBorrowResponse>(baseUrl, token, "POST", `/lending/borrow/approve/${approvalId}`);
     },
     repay(payload) {
       return callApi(baseUrl, token, "POST", "/lending/repay", payload);
     },
     getLoan(loanId) {
-      return callApi(baseUrl, token, "GET", `/lending/loans/${loanId}`);
+      return callApi<Loan>(baseUrl, token, "GET", `/lending/loans/${loanId}`);
+    },
+    getAgentLoans(agentId, role = "borrower") {
+      return callApi<GetAgentLoansResponse>(
+        baseUrl,
+        token,
+        "GET",
+        `/lending/agents/${encodeURIComponent(agentId)}/loans?role=${role}`
+      );
     },
     getAgentRep(agentId) {
-      return callApi(baseUrl, token, "GET", `/lending/agents/${encodeURIComponent(agentId)}/rep`);
+      return callApi<AgentRep>(baseUrl, token, "GET", `/lending/agents/${encodeURIComponent(agentId)}/rep`);
     },
   };
+}
+
+/** Public (no auth): resolve ENS name to address. Used by onboarding before user exists. */
+export async function resolveEns(
+  baseUrl: string,
+  ensName: string
+): Promise<{ address: string | null }> {
+  const url = `${baseUrl.replace(/\/$/, "")}/platform/ens/resolve?name=${encodeURIComponent(ensName)}`;
+  const response = await fetch(url);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = (payload as { error?: string }).error || "ENS resolution failed";
+    throw new Error(message);
+  }
+  return payload as { address: string | null };
 }

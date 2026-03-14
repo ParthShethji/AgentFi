@@ -1,6 +1,8 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Moon, Sun } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { connectMetaMask, formatAddress, getCurrentAccount } from '../wallet/metamask';
 
 type NavView = 'dashboard' | 'agents' | 'activity' | 'settings';
 
@@ -9,7 +11,38 @@ interface Props {
 }
 
 export default function NavBar({ activeNav = 'dashboard' }: Props) {
-  const { theme, toggleTheme, setCurrentView } = useApp();
+  const navigate = useNavigate();
+  const { theme, toggleTheme, walletAddress, setWalletAddress, walletChainId, setWalletChainId, walletConnected, setWalletConnected } = useApp();
+
+  const handleWalletClick = async () => {
+    try {
+      if (walletAddress) {
+        setWalletAddress(null);
+        setWalletChainId(null);
+        setWalletConnected(false);
+        return;
+      }
+      const res = await connectMetaMask();
+      setWalletAddress(res.address);
+      setWalletChainId(res.chainId);
+      setWalletConnected(true);
+    } catch (e) {
+      // swallow; onboarding has full UX
+      console.error(e);
+    }
+  };
+
+  React.useEffect(() => {
+    (async () => {
+      if (walletAddress) return;
+      const current = await getCurrentAccount();
+      if (current) {
+        setWalletAddress(current.address);
+        setWalletChainId(current.chainId);
+        setWalletConnected(true);
+      }
+    })();
+  }, []);
 
   return (
     <nav
@@ -35,7 +68,7 @@ export default function NavBar({ activeNav = 'dashboard' }: Props) {
     >
       {/* Wordmark */}
       <button
-        onClick={() => setCurrentView('landing')}
+        onClick={() => navigate('/')}
         style={{
           background: 'none',
           border: 'none',
@@ -68,7 +101,7 @@ export default function NavBar({ activeNav = 'dashboard' }: Props) {
               key={label}
               className={`nav-link ${isActive ? 'active' : ''}`}
               onClick={() => {
-                if (label === 'Dashboard') setCurrentView('dashboard');
+                if (label === 'Dashboard') navigate('/dashboard');
               }}
               id={`nav-${view}`}
             >
@@ -105,10 +138,16 @@ export default function NavBar({ activeNav = 'dashboard' }: Props) {
         </div>
 
         {/* Wallet chip */}
-        <div className="wallet-chip">
-          <span className="pulse-dot" style={{ width: 7, height: 7 }} />
-          0x1234...5678
-        </div>
+        <button
+          className="wallet-chip"
+          onClick={handleWalletClick}
+          style={{ cursor: 'pointer' }}
+          title={walletAddress ? `Connected (${walletChainId || 'unknown'}) — click to disconnect` : 'Connect MetaMask'}
+          id="navbar-wallet-btn"
+        >
+          <span className="pulse-dot" style={{ width: 7, height: 7, background: walletConnected ? 'var(--success)' : undefined }} />
+          {walletAddress ? formatAddress(walletAddress) : 'Connect wallet'}
+        </button>
       </div>
     </nav>
   );

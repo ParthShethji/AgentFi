@@ -1,17 +1,30 @@
 import { Router } from "express";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import { ethers } from "ethers";
 import * as blockchain from "./blockchain.service";
 import { setAgentPrivateKey } from "./config/agentKeys";
 import { putStrategyDoc } from "./utils/strategyStore";
-import { writeEnsTextRecord } from "./blockchain.service";
 // @ts-ignore
 const db = require("./config/db");
 
 const router = Router();
 
+// Public: resolve ENS name to address (used by onboarding before user exists). Base Sepolia.
+router.get("/ens/resolve", async (req, res) => {
+  const name = typeof req.query.name === "string" ? req.query.name.trim() : "";
+  if (!name) {
+    return res.status(400).json({ error: "name is required" });
+  }
+  try {
+    const address = await blockchain.resolveEnsToAddress(name);
+    return res.json({ address: address ?? null });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "ENS resolution failed" });
+  }
+});
+
 router.post("/users", async (req, res) => {
-  const { email, walletAddress } = req.body || {};
+  const { email, walletAddress, zkProofData } = req.body || {};
 
   if (!email) {
     return res.status(400).json({ error: "email is required" });
@@ -20,13 +33,34 @@ router.post("/users", async (req, res) => {
   const userId = randomUUID();
   const userWallet = walletAddress || ethers.Wallet.createRandom().address;
 
+  // Derive a deterministic human_id from the ZK proof (mock: hash of wallet address).
+  // In production this would come from Reclaim Protocol's verified proof payload.
+  let humanId: string | null = null;
+  let zkStatus: "none" | "verified" = "none";
+  if (zkProofData || walletAddress) {
+    humanId = createHash("sha256")
+      .update(zkProofData || walletAddress || "")
+      .digest("hex");
+    zkStatus = "verified";
+  }
+
   try {
+    if (humanId) {
+      const { rows: existing } = await db.query(
+        `SELECT 1 FROM users WHERE human_id = $1`,
+        [humanId]
+      );
+      if (existing.length) {
+        return res.status(409).json({ error: "This identity has already been registered. One human, one account." });
+      }
+    }
+
     await db.query(
-      `INSERT INTO users (user_id, email, wallet_address, zk_proof_status, created_at)
-       VALUES ($1, $2, $3, 'verified', NOW())`,
-      [userId, email, userWallet]
+      `INSERT INTO users (user_id, email, wallet_address, zk_proof_status, human_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())`,
+      [userId, email, userWallet, zkStatus, humanId]
     );
-    return res.json({ userId, email, walletAddress: userWallet });
+    return res.json({ userId, email, walletAddress: userWallet, zkVerified: zkStatus === "verified" });
   } catch (error: any) {
     return res.status(400).json({ error: error.message || "failed to create user" });
   }
@@ -49,28 +83,40 @@ router.post("/agents", async (req, res) => {
     },
   } = req.body || {};
 
-  if (!userId || !role || !username) {
-    return res.status(400).json({ error: "userId, role, username are required" });
+  if (!userId || !role || !ensName) {
+    return res.status(400).json({ error: "userId, role, ensName are required" });
   }
 
   if (!["lender", "borrower"].includes(role)) {
     return res.status(400).json({ error: "role must be lender or borrower" });
   }
 
+  if (!ensName.includes(".")) {
+    return res.status(400).json({ error: "ensName must be a valid ENS name (e.g. alice.eth)" });
+  }
+
   try {
-    let resolvedEns = ensName;
-    if (!resolvedEns) {
-      let index = 1;
-      while (true) {
-        const candidate = `agent${index}.${username}.agentfi.eth`;
-        const { rows } = await db.query(`SELECT 1 FROM agents WHERE ens_name = $1`, [candidate]);
-        if (!rows.length) {
-          resolvedEns = candidate;
-          break;
-        }
-        index += 1;
-      }
+    // Verify user is ZK-verified before allowing agent creation
+    const { rows: userRows } = await db.query(
+      `SELECT zk_proof_status FROM users WHERE user_id = $1`,
+      [userId]
+    );
+    if (!userRows.length) {
+      return res.status(404).json({ error: "user not found" });
     }
+    if (userRows[0].zk_proof_status !== "verified") {
+      return res.status(403).json({ error: "ZK human verification required before creating an agent" });
+    }
+
+    // Check ENS name not already taken
+    const { rows: ensRows } = await db.query(
+      `SELECT 1 FROM agents WHERE ens_name = $1`,
+      [ensName]
+    );
+    if (ensRows.length) {
+      return res.status(409).json({ error: "This ENS name is already registered on the platform" });
+    }
+
     const agentId = randomUUID();
     const docId = `doc-${agentId}`;
     const agentWallet = ethers.Wallet.createRandom();
@@ -78,27 +124,13 @@ router.post("/agents", async (req, res) => {
     setAgentPrivateKey(agentWallet.address, agentWallet.privateKey);
     putStrategyDoc(docId, strategy);
 
-    const registerTx = await blockchain.registerAgent(agentWallet.address, Number(initialScore), resolvedEns);
-
-    // Write ENSIP-25 text record so the userId is verifiable on-chain via the ENS resolver.
-    // Uses ENS_DEPLOYER_KEY (the platform's ENS controller key).
-    // Silently skipped when ENS_RESOLVER_ADDRESS is not configured (local Hardhat dev mode).
-    try {
-      const ensDeployerKey = process.env.ENS_DEPLOYER_KEY;
-      if (ensDeployerKey) {
-        await writeEnsTextRecord(resolvedEns, "agentfi.userId", userId, ensDeployerKey);
-      } else {
-        console.warn(`[platform] ENS_DEPLOYER_KEY not set — skipping ENSIP-25 text record for ${resolvedEns}`);
-      }
-    } catch (ensErr: any) {
-      console.warn(`[platform] writeEnsTextRecord failed (non-fatal): ${ensErr.message}`);
-    }
+    const registerTx = await blockchain.registerAgent(agentWallet.address, Number(initialScore), ensName);
 
     // Auto-fund agent wallet with ETH for gas, then mint USDC and approve lending contract
     try {
       await blockchain.fundEth(agentWallet.address, "1.0");
-      await blockchain.mintUsdc(agentWallet.address, 10000); // 10k USDC for demo
-      await blockchain.approveUsdc(agentWallet.privateKey, 100000); // approve 100k
+      await blockchain.mintUsdc(agentWallet.address, 10000);
+      await blockchain.approveUsdc(agentWallet.privateKey, 100000);
     } catch (mintErr: any) {
       console.warn(`[platform] auto-mint/approve failed (non-fatal): ${mintErr.message}`);
     }
@@ -107,12 +139,12 @@ router.post("/agents", async (req, res) => {
       `INSERT INTO agents (
          agent_id, user_id, ens_name, wallet_address, fileverse_doc_id, role, status, reputation_score, created_at
        ) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, NOW())`,
-      [agentId, userId, resolvedEns, agentWallet.address, docId, role, Number(initialScore)]
+      [agentId, userId, ensName, agentWallet.address, docId, role, Number(initialScore)]
     );
 
     return res.json({
       agentId,
-      ensName: resolvedEns,
+      ensName,
       walletAddress: agentWallet.address,
       privateKey: agentWallet.privateKey,
       role,

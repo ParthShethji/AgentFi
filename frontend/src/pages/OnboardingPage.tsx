@@ -1,32 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Shield, TrendingUp, BarChart2, Layers, Check, ArrowLeft } from 'lucide-react';
+import { Shield, Check, ArrowLeft } from 'lucide-react';
 import AmbientBackground from '../components/AmbientBackground';
 import { useApp } from '../context/AppContext';
+import { useApi } from '../context/ApiContext';
+import { resolveEns } from '../api';
+import { connectMetaMask, formatAddress, getEthereumProvider } from '../wallet/metamask';
 
-const STEP_LABELS = ['Connect', 'Name Agent', 'Choose Role', 'Strategy', 'Verify', 'Launch'];
+const STEP_LABELS = ['Connect', 'Verify ENS', 'ZK Proof'];
 
-const LENDER_STRATEGY = `Only lend to agents with reputation above 80.
-Maximum single loan: 500 USDC.
-Maximum concurrent loans: 3.
-Minimum interest rate: 2%.`;
-
-const TRADER_STRATEGY = `Borrow maximum 800 USDC per opportunity.
-Stop-loss at 5%. Take-profit at 12%.
-Only trade on Base network.
-Preferred assets: USDC, ETH, cbBTC.`;
-
-const BOTH_STRATEGY = `Only lend to agents with reputation above 80.
-Maximum single loan: 500 USDC.
-Maximum concurrent loans: 3.
-Minimum interest rate: 2%.
-
-Borrow maximum 800 USDC per opportunity.
-Stop-loss at 5%. Take-profit at 12%.
-Only trade on Base network.
-Preferred assets: USDC, ETH, cbBTC.`;
-
-type Role = 'Lender' | 'Trader' | 'Both';
+const DEFAULT_EMAIL = 'user@agentfi.demo';
 
 const variants = {
   enter: (dir: number) => ({ y: dir > 0 ? 80 : -80, opacity: 0 }),
@@ -35,57 +19,127 @@ const variants = {
 };
 
 export default function OnboardingPage() {
-  const { setCurrentView, onboardingStep: step, setOnboardingStep: setStep } = useApp();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { api, baseUrl } = useApi();
+  const {
+    onboardingStep: step, setOnboardingStep: setStep,
+    userId, setUserId,
+    walletAddress, setWalletAddress,
+    walletChainId, setWalletChainId,
+    walletConnected, setWalletConnected,
+    verifiedEnsName, setVerifiedEnsName,
+    zkVerified, setZkVerified,
+  } = useApp();
+
   const [dir, setDir] = useState(1);
-  const [agentName, setAgentName] = useState('vault-alpha');
-  const [nameAvailable, setNameAvailable] = useState<boolean | null>(true);
-  const [role, setRole] = useState<Role>('Both');
-  const [strategy, setStrategy] = useState(BOTH_STRATEGY);
-  const [walletConnected, setWalletConnected] = useState(false);
+  const [ensName, setEnsName] = useState(verifiedEnsName || '');
+  const [ensValid, setEnsValid] = useState<boolean | null>(null);
+  const [ensOwnershipChecked, setEnsOwnershipChecked] = useState(false);
+  const [ensOwnershipError, setEnsOwnershipError] = useState<string | null>(null);
+  const [ensVerifying, setEnsVerifying] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
 
-  // Update strategy when role changes
+  // When arriving from create-agent with ?step=0|1|2, open that onboarding step
   useEffect(() => {
-    if (role === 'Lender') setStrategy(LENDER_STRATEGY);
-    else if (role === 'Trader') setStrategy(TRADER_STRATEGY);
-    else setStrategy(BOTH_STRATEGY);
-  }, [role]);
+    const stepParam = searchParams.get('step');
+    if (stepParam !== null) {
+      const n = parseInt(stepParam, 10);
+      if (n >= 0 && n <= 2) setStep(n);
+    }
+  }, [searchParams, setStep]);
 
-  // Debounced ENS check
+  // If already fully verified, redirect to create-agent
+  useEffect(() => {
+    if (zkVerified && verifiedEnsName && userId) {
+      navigate('/create-agent', { replace: true });
+    }
+  }, [zkVerified, verifiedEnsName, userId, navigate]);
+
+  // Debounced ENS format validation
   useEffect(() => {
     if (step !== 1) return;
-    setNameAvailable(null);
+    if (!ensName || !ensName.includes('.')) {
+      setEnsValid(null);
+      setEnsOwnershipChecked(false);
+      return;
+    }
+    setEnsValid(null);
+    setEnsOwnershipChecked(false);
     const t = setTimeout(() => {
-      // Mock: taken if name is exactly "vault-alpha-taken"
-      setNameAvailable(agentName !== 'vault-alpha-taken' && agentName.length > 2);
+      const isValid = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/.test(ensName);
+      setEnsValid(isValid && ensName.length > 4);
     }, 400);
     return () => clearTimeout(t);
-  }, [agentName, step]);
-
-  // Keyboard navigation
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && step < 5) advance();
-      if (e.key === 'Escape' && step > 0) back();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [step]);
+  }, [ensName, step]);
 
   const advance = useCallback(() => {
     setDir(1);
-    setStep(Math.min(step + 1, 5));
-  }, [step]);
+    setStep(Math.min(step + 1, 2));
+  }, [step, setStep]);
 
   const back = useCallback(() => {
     setDir(-1);
     setStep(Math.max(step - 1, 0));
-  }, [step]);
+  }, [step, setStep]);
 
   const jumpTo = (s: number) => {
     if (s < step) { setDir(-1); setStep(s); }
   };
 
-  const progress = ((step + 1) / 6) * 100;
+  const handleVerifyOwnership = async () => {
+    setEnsOwnershipError(null);
+    if (!walletAddress) {
+      setEnsOwnershipError('The ENS name does not belong to the user.');
+      return;
+    }
+    setEnsVerifying(true);
+    try {
+      const { address } = await resolveEns(baseUrl, ensName);
+      if (address == null || address.toLowerCase() !== walletAddress.toLowerCase()) {
+        setEnsOwnershipError('The ENS name does not belong to the user.');
+        return;
+      }
+      setEnsOwnershipChecked(true);
+      setVerifiedEnsName(ensName);
+      setTimeout(advance, 600);
+    } catch {
+      setEnsOwnershipError('The ENS name does not belong to the user.');
+    } finally {
+      setEnsVerifying(false);
+    }
+  };
+
+  const handleZkVerify = async () => {
+    setVerifying(true);
+    setVerifyError(null);
+    // Mock ZK verification — simulates ~1.5s proof generation
+    await new Promise(r => setTimeout(r, 1500));
+    setZkVerified(true);
+
+    // Create the user account with ZK proof data
+    try {
+      let currentUserId = userId;
+      if (!currentUserId) {
+        const userRes = await api.createUser({
+          email: DEFAULT_EMAIL,
+          walletAddress: walletAddress || undefined,
+          zkProofData: walletAddress || 'mock-zk-proof',
+        });
+        currentUserId = userRes.userId;
+        setUserId(currentUserId);
+      }
+      setVerifying(false);
+    } catch (err) {
+      setVerifying(false);
+      setVerifyError(err instanceof Error ? err.message : 'Failed to create user');
+      setZkVerified(false);
+    }
+  };
+
+  const progress = ((step + 1) / 3) * 100;
 
   return (
     <div style={{ position: 'relative', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -121,7 +175,7 @@ export default function OnboardingPage() {
         position: 'relative',
         zIndex: 10,
         overflow: 'hidden',
-        minHeight: 520,
+        minHeight: 480,
         margin: '0 20px',
       }}>
         {/* Progress bar */}
@@ -130,7 +184,7 @@ export default function OnboardingPage() {
         </div>
 
         {/* Back button */}
-        {step > 0 && step < 5 && (
+        {step > 0 && (
           <button
             onClick={back}
             style={{
@@ -153,12 +207,12 @@ export default function OnboardingPage() {
               initial="enter"
               animate="center"
               exit="exit"
-              transition={{ duration: step === 5 ? 0.5 : 0.35, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
             >
-              {/* ── Step 0: Connect ── */}
+              {/* ── Step 0: Connect Wallet ── */}
               {step === 0 && (
                 <div>
-                  <p className="label-ui">STEP 1 OF 6</p>
+                  <p className="label-ui">STEP 1 OF 3</p>
                   <h2 style={{ fontFamily: 'Cormorant Garamond', fontSize: 'clamp(40px, 6vw, 52px)', fontWeight: 300, marginTop: 12, color: 'var(--text-primary)' }}>
                     Connect your wallet.
                   </h2>
@@ -168,278 +222,169 @@ export default function OnboardingPage() {
                   <div style={{ marginTop: 40, display: 'flex', flexDirection: 'column', gap: 12 }}>
                     <button
                       className="btn btn-primary btn-full glow-accent"
-                      onClick={() => { setWalletConnected(true); advance(); }}
+                      onClick={async () => {
+                        setConnectError(null);
+                        try {
+                          const res = await connectMetaMask();
+                          setWalletAddress(res.address);
+                          setWalletChainId(res.chainId);
+                          setWalletConnected(true);
+                          advance();
+                        } catch (e) {
+                          setConnectError(e instanceof Error ? e.message : 'Failed to connect wallet');
+                        }
+                      }}
                       id="connect-metamask-btn"
                     >
-                      <span>🦊</span> Connect with MetaMask
+                      <span>🦊</span> {walletAddress ? `Connected: ${formatAddress(walletAddress)}` : 'Connect with MetaMask'}
                     </button>
-                    <button
-                      className="btn btn-ghost btn-full"
-                      onClick={() => { setWalletConnected(true); advance(); }}
-                      id="connect-walletconnect-btn"
-                    >
+                    <button className="btn btn-ghost btn-full" disabled id="connect-walletconnect-btn">
                       <span>🔗</span> WalletConnect
                     </button>
                   </div>
+                  {connectError && (
+                    <p style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--danger)', textAlign: 'center', marginTop: 14 }}>
+                      {connectError}
+                    </p>
+                  )}
+                  {!getEthereumProvider() && (
+                    <p style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center', marginTop: 14 }}>
+                      MetaMask not detected. Install it to continue.
+                    </p>
+                  )}
                   <p style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center', marginTop: 20 }}>
                     We never custody your funds.
                   </p>
                 </div>
               )}
 
-              {/* ── Step 1: Name Agent ── */}
+              {/* ── Step 1: ENS Name + Ownership Verification ── */}
               {step === 1 && (
                 <div>
-                  <p className="label-ui">STEP 2 OF 6</p>
+                  <p className="label-ui">STEP 2 OF 3</p>
                   <h2 style={{ fontFamily: 'Cormorant Garamond', fontSize: 'clamp(40px, 6vw, 52px)', fontWeight: 300, marginTop: 12, color: 'var(--text-primary)' }}>
-                    Name your agent.
+                    Verify your ENS.
                   </h2>
-                  <div style={{ marginTop: 40, position: 'relative' }}>
+                  <p style={{ fontFamily: 'Inter', fontSize: 14, color: 'var(--text-secondary)', marginTop: 8, lineHeight: 1.6 }}>
+                    Enter the ENS name you own. We'll verify it resolves to your connected wallet.
+                    Your agents will be created as subdomains of this name.
+                  </p>
+                  <div style={{ marginTop: 28, position: 'relative' }}>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
                       <input
                         className="input-field"
-                        value={agentName}
-                        onChange={e => setAgentName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                        value={ensName}
+                        onChange={e => {
+                          setEnsName(e.target.value.toLowerCase().replace(/[^a-z0-9.-]/g, ''));
+                          setEnsOwnershipChecked(false);
+                          setEnsOwnershipError(null);
+                        }}
+                        placeholder="yourname.eth"
                         style={{ fontFamily: 'Cormorant Garamond', fontSize: 36, fontWeight: 300, flex: 1, border: 'none', paddingBottom: 0 }}
-                        id="agent-name-input"
+                        id="ens-name-input"
                         autoFocus
                       />
-                      <span style={{ fontFamily: 'Cormorant Garamond', fontSize: 24, fontWeight: 300, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
-                        .agentfi.eth
-                      </span>
                     </div>
                     <div style={{ marginTop: 16, fontFamily: 'Inter', fontSize: 13 }}>
-                      {nameAvailable === null && <span style={{ color: 'var(--text-secondary)' }}>⏳ Checking availability...</span>}
-                      {nameAvailable === true && <span style={{ color: 'var(--success)' }}>🟢 {agentName}.agentfi.eth is available</span>}
-                      {nameAvailable === false && <span style={{ color: 'var(--danger)' }}>🔴 Taken — try {agentName}-2 or {agentName}-prime</span>}
+                      {!ensName && <span style={{ color: 'var(--text-tertiary)' }}>Enter your ENS name (e.g. alice.eth)</span>}
+                      {ensName && ensValid === null && <span style={{ color: 'var(--text-secondary)' }}>⏳ Validating...</span>}
+                      {ensValid === true && !ensOwnershipChecked && (
+                        <span style={{ color: 'var(--text-secondary)' }}>🟢 Valid format — click below to verify ownership</span>
+                      )}
+                      {ensValid === true && ensOwnershipChecked && (
+                        <span style={{ color: 'var(--success)' }}>✅ {ensName} verified — belongs to {formatAddress(walletAddress || '')}</span>
+                      )}
+                      {ensName && ensValid === false && <span style={{ color: 'var(--danger)' }}>🔴 Invalid ENS format — must end in .eth</span>}
                     </div>
+                    {walletAddress && (
+                      <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, fontFamily: 'JetBrains Mono', fontSize: 12, color: 'var(--text-tertiary)' }}>
+                        Connected: {walletAddress}
+                      </div>
+                    )}
                   </div>
-                  <button
-                    className="btn btn-primary glow-accent"
-                    style={{ marginTop: 40, height: 52, padding: '0 32px' }}
-                    onClick={advance}
-                    disabled={!nameAvailable}
-                    id="name-continue-btn"
-                  >
-                    Continue →
-                  </button>
+
+                  {ensOwnershipError && (
+                    <p style={{ fontFamily: 'Inter', fontSize: 13, color: 'var(--danger)', marginTop: 16 }}>
+                      {ensOwnershipError}
+                    </p>
+                  )}
+                  {!ensOwnershipChecked ? (
+                    <button
+                      className="btn btn-primary glow-accent"
+                      style={{ marginTop: 32, height: 52, padding: '0 32px' }}
+                      onClick={handleVerifyOwnership}
+                      disabled={!ensValid || ensVerifying}
+                      id="verify-ownership-btn"
+                    >
+                      {ensVerifying ? 'Verifying...' : 'Verify ENS Ownership →'}
+                    </button>
+                  ) : (
+                    <div style={{ marginTop: 16, fontFamily: 'Inter', fontSize: 13, color: 'var(--success)', textAlign: 'center' }}>
+                      Ownership verified. Advancing...
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* ── Step 2: Choose Role ── */}
+              {/* ── Step 2: ZK Human Verification ── */}
               {step === 2 && (
                 <div>
-                  <p className="label-ui">STEP 3 OF 6</p>
+                  <p className="label-ui">STEP 3 OF 3</p>
                   <h2 style={{ fontFamily: 'Cormorant Garamond', fontSize: 'clamp(40px, 6vw, 52px)', fontWeight: 300, marginTop: 12, color: 'var(--text-primary)' }}>
-                    What will your agent do?
+                    Prove you're human.
                   </h2>
-                  <div style={{ marginTop: 32, display: 'flex', gap: 12 }}>
-                    {([
-                      { r: 'Lender' as Role, icon: <TrendingUp size={24} color="var(--accent)" />, line: 'Earn yield. Offer capital to trusted agents.' },
-                      { r: 'Trader' as Role, icon: <BarChart2 size={24} color="var(--warning)" />, line: 'Borrow capital. Execute strategies. Repay with profit.' },
-                      { r: 'Both' as Role, icon: <Layers size={24} color="#60A5FA" />, line: 'Lend idle funds while trading with borrowed capital.' },
-                    ] as { r: Role; icon: React.ReactNode; line: string }[]).map(({ r, icon, line }) => (
-                      <button
-                        key={r}
-                        className={`glass role-card ${role === r ? 'selected' : ''}`}
-                        onClick={() => {
-                          setRole(r);
-                          setTimeout(advance, 500);
-                        }}
-                        id={`role-${r.toLowerCase()}-btn`}
-                        style={{ background: 'none', border: '1px solid var(--border)', cursor: 'pointer', textAlign: 'left' }}
-                      >
-                        <div style={{ marginBottom: 12 }}>{icon}</div>
-                        <div style={{ fontFamily: 'Cormorant Garamond', fontSize: 20, fontWeight: 400, color: 'var(--text-primary)', marginBottom: 8 }}>{r}</div>
-                        <div style={{ fontFamily: 'Inter', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{line}</div>
-                      </button>
-                    ))}
+                  <p style={{ fontFamily: 'Inter', fontSize: 16, color: 'var(--text-secondary)', marginTop: 16, lineHeight: 1.7 }}>
+                    One-time ZK identity verification via Reclaim Protocol.<br />
+                    This maps your ENS to a unique human — preventing sybil attacks.
+                  </p>
+
+                  <div className="glass" style={{ marginTop: 28, padding: '20px 24px', borderRadius: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontFamily: 'Inter', fontSize: 11, color: 'var(--text-secondary)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>Your Identity</div>
+                        <div style={{ fontFamily: 'JetBrains Mono', fontSize: 18, color: 'var(--accent)' }}>{verifiedEnsName}</div>
+                        <div style={{ fontFamily: 'JetBrains Mono', fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>{walletAddress ? formatAddress(walletAddress) : ''}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div className="badge badge-active" style={{ marginBottom: 4 }}>{zkVerified ? 'VERIFIED' : 'REQUIRED'}</div>
+                      </div>
+                    </div>
                   </div>
+
+                  {verifyError && (
+                    <p style={{ fontFamily: 'Inter', fontSize: 13, color: 'var(--danger)', marginTop: 16, textAlign: 'center' }}>
+                      {verifyError}
+                    </p>
+                  )}
+
+                  {!zkVerified ? (
+                    <button
+                      className="btn btn-primary btn-full glow-accent"
+                      style={{ marginTop: 24 }}
+                      onClick={handleZkVerify}
+                      disabled={verifying}
+                      id="verify-btn"
+                    >
+                      <Shield size={16} /> {verifying ? 'Verifying identity...' : 'Verify with Reclaim Protocol'}
+                    </button>
+                  ) : (
+                    <button
+                      className="btn btn-primary btn-full glow-accent"
+                      style={{ marginTop: 24 }}
+                      onClick={() => navigate('/create-agent')}
+                      id="continue-to-agents-btn"
+                    >
+                      <Shield size={16} /> Identity verified — Create your first agent →
+                    </button>
+                  )}
+                  <p style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center', marginTop: 16 }}>
+                    ZK proof ensures one human per ENS. Your data stays private.
+                  </p>
                 </div>
-              )}
-
-              {/* ── Step 3: Strategy ── */}
-              {step === 3 && (
-                <div>
-                  <p className="label-ui">STEP 4 OF 6</p>
-                  <h2 style={{ fontFamily: 'Cormorant Garamond', fontSize: 'clamp(40px, 6vw, 52px)', fontWeight: 300, marginTop: 12, color: 'var(--text-primary)' }}>
-                    Define your risk rules.
-                  </h2>
-                  <div className="glass" style={{ marginTop: 28, padding: 20, borderRadius: 12 }}>
-                    <textarea
-                      className="textarea-field"
-                      value={strategy}
-                      onChange={e => setStrategy(e.target.value)}
-                      rows={10}
-                      style={{ height: 220, overflowY: 'auto', width: '100%' }}
-                      id="strategy-textarea"
-                    />
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
-                    <span>🔒</span>
-                    <span style={{ fontFamily: 'Inter', fontSize: 13, color: 'var(--text-secondary)' }}>
-                      Encrypted in your Fileverse vault. Only your agent can read this.
-                    </span>
-                  </div>
-                  <button
-                    className="btn btn-primary glow-accent"
-                    style={{ marginTop: 28, height: 52, padding: '0 32px' }}
-                    onClick={advance}
-                    id="strategy-continue-btn"
-                  >
-                    Continue →
-                  </button>
-                </div>
-              )}
-
-              {/* ── Step 4: Verify / Bootstrap Credit ── */}
-              {step === 4 && (
-                <BootstrapStep advance={advance} />
-              )}
-
-              {/* ── Step 5: Launch ── */}
-              {step === 5 && (
-                <LaunchStep agentName={agentName} setCurrentView={setCurrentView} setStep={setStep} />
               )}
             </motion.div>
           </AnimatePresence>
         </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Bootstrap Step ──────────────────────────────────────────────────────────
-function BootstrapStep({ advance }: { advance: () => void }) {
-  const [score, setScore] = useState(0);
-
-  useEffect(() => {
-    const start = performance.now();
-    const animate = (now: number) => {
-      const pct = Math.min((now - start) / 800, 1);
-      const eased = 1 - Math.pow(1 - pct, 3);
-      setScore(Math.round(40 * eased));
-      if (pct < 1) requestAnimationFrame(animate);
-    };
-    requestAnimationFrame(animate);
-  }, []);
-
-  return (
-    <div>
-      <p className="label-ui">STEP 5 OF 6</p>
-      <h2 style={{ fontFamily: 'Cormorant Garamond', fontSize: 'clamp(40px, 6vw, 52px)', fontWeight: 300, marginTop: 12, color: 'var(--text-primary)' }}>
-        Unlock borrowing.
-      </h2>
-      <p style={{ fontFamily: 'Inter', fontSize: 16, color: 'var(--text-secondary)', marginTop: 16, lineHeight: 1.7 }}>
-        Prove your identity once with a ZK proof.<br />
-        Borrow capital without posting collateral.
-      </p>
-
-      {/* Tier preview */}
-      <div className="glass" style={{ marginTop: 28, padding: '20px 24px', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontFamily: 'Inter', fontSize: 11, color: 'var(--text-secondary)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Current Score</div>
-          <div style={{ fontFamily: 'JetBrains Mono', fontSize: 28, color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>0</div>
-        </div>
-        <span style={{ color: 'var(--accent)', fontSize: 24 }}>→</span>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontFamily: 'Inter', fontSize: 11, color: 'var(--text-secondary)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>After Verification</div>
-          <div style={{ fontFamily: 'JetBrains Mono', fontSize: 28, color: 'var(--accent)', fontVariantNumeric: 'tabular-nums' }}>{score} / 100</div>
-        </div>
-        <div style={{ textAlign: 'right' }}>
-          <div className="badge badge-active" style={{ marginBottom: 4 }}>NEW</div>
-          <div style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)' }}>Max borrow: <span style={{ fontFamily: 'JetBrains Mono', color: 'var(--text-primary)' }}>$500 USDC</span></div>
-        </div>
-      </div>
-
-      <button
-        className="btn btn-primary btn-full glow-accent"
-        style={{ marginTop: 24 }}
-        onClick={advance}
-        id="verify-btn"
-      >
-        <Shield size={16} /> Verify with Reclaim Protocol
-      </button>
-      <div style={{ textAlign: 'center', marginTop: 16 }}>
-        <button
-          onClick={advance}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Inter', fontSize: 13, color: 'var(--text-tertiary)' }}
-          id="skip-verify-btn"
-        >
-          Skip for now — I'm only lending
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── Launch Step ──────────────────────────────────────────────────────────────
-function LaunchStep({ agentName, setCurrentView, setStep }: { agentName: string; setCurrentView: (v: any) => void; setStep: (s: number) => void }) {
-  const [drawDone, setDrawDone] = useState(false);
-  const [pulseDone, setPulseDone] = useState(false);
-
-  useEffect(() => {
-    const t1 = setTimeout(() => setDrawDone(true), 1000);
-    const t2 = setTimeout(() => setPulseDone(true), 1500);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, []);
-
-  return (
-    <div style={{ textAlign: 'center' }}>
-      {/* Animated checkmark */}
-      <div style={{ position: 'relative', width: 80, height: 80, margin: '0 auto' }}>
-        <svg width="80" height="80" viewBox="0 0 80 80">
-          <defs>
-            <style>{`
-              @keyframes drawCircle {
-                from { stroke-dashoffset: 220; }
-                to { stroke-dashoffset: 0; }
-              }
-              @keyframes drawCheck {
-                from { stroke-dashoffset: 60; }
-                to { stroke-dashoffset: 0; }
-              }
-              @keyframes pulseRing {
-                from { transform-origin: 40px 40px; transform: scale(1); opacity: 1; }
-                to { transform-origin: 40px 40px; transform: scale(1.8); opacity: 0; }
-              }
-            `}</style>
-          </defs>
-          {pulseDone && (
-            <circle cx="40" cy="40" r="36" fill="none" stroke="var(--accent)" strokeWidth="1.5"
-              style={{ animation: 'pulseRing 0.6s ease-out forwards', transformBox: 'fill-box' }} />
-          )}
-          <circle cx="40" cy="40" r="35" fill="none" stroke="var(--accent)" strokeWidth="2.5"
-            strokeDasharray="220" style={{ animation: 'drawCircle 0.6s ease-out forwards' }} />
-          <polyline points="24,42 35,53 57,30" fill="none" stroke="var(--accent)" strokeWidth="3"
-            strokeLinecap="round" strokeLinejoin="round"
-            strokeDasharray="60" style={{ animation: 'drawCheck 0.3s ease-out 0.7s forwards', strokeDashoffset: 60 }} />
-        </svg>
-      </div>
-
-      <h2 style={{ fontFamily: 'Cormorant Garamond', fontSize: 'clamp(48px, 8vw, 72px)', fontWeight: 300, marginTop: 32, color: 'var(--text-primary)', lineHeight: 1 }}>
-        Your agent is live.
-      </h2>
-      <p style={{ fontFamily: 'Inter', fontSize: 16, color: 'var(--text-secondary)', marginTop: 16, lineHeight: 1.7 }}>
-        <span style={{ fontFamily: 'JetBrains Mono', color: 'var(--accent)' }}>{agentName}.agentfi.eth</span> is active<br />
-        and monitoring the network.
-      </p>
-
-      <div style={{ marginTop: 40, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <button
-          className="btn btn-primary btn-full glow-accent"
-          onClick={() => setCurrentView('dashboard')}
-          id="view-dashboard-btn"
-        >
-          View Dashboard →
-        </button>
-        <button
-          className="btn btn-ghost btn-full"
-          onClick={() => { setStep(0); }}
-          id="launch-another-btn"
-        >
-          Launch another agent
-        </button>
       </div>
     </div>
   );
