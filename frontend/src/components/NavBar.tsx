@@ -4,7 +4,7 @@ import { Moon, Sun } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { connectMetaMask, formatAddress, getCurrentAccount } from '../wallet/metamask';
 
-type NavView = 'dashboard' | 'agents' | 'activity' | 'settings';
+type NavView = 'dashboard' | 'activity';
 
 interface Props {
   activeNav?: NavView;
@@ -93,22 +93,19 @@ export default function NavBar({ activeNav = 'dashboard' }: Props) {
 
       {/* Center nav */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 28, flex: 1, justifyContent: 'center' }}>
-        {(['Dashboard', 'Agents', 'Activity', 'Settings'] as const).map(label => {
-          const view = label.toLowerCase() as NavView;
-          const isActive = activeNav === view;
-          return (
-            <button
-              key={label}
-              className={`nav-link ${isActive ? 'active' : ''}`}
-              onClick={() => {
-                if (label === 'Dashboard') navigate('/dashboard');
-              }}
-              id={`nav-${view}`}
-            >
-              {label}
-            </button>
-          );
-        })}
+        {([
+          { label: 'Dashboard', view: 'dashboard' as NavView, path: '/dashboard' },
+          { label: 'Settlements', view: 'activity' as NavView, path: '/settlements' },
+        ]).map(({ label, view, path }) => (
+          <button
+            key={view}
+            className={`nav-link ${activeNav === view ? 'active' : ''}`}
+            onClick={() => navigate(path)}
+            id={`nav-${view}`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Right side */}
@@ -122,20 +119,6 @@ export default function NavBar({ activeNav = 'dashboard' }: Props) {
         >
           {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
         </button>
-
-        {/* Agents active chip */}
-        <div className="glass" style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '6px 12px',
-          borderRadius: 100,
-        }}>
-          <span className="pulse-dot" style={{ width: 6, height: 6 }} />
-          <span style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)' }}>
-            4 agents active
-          </span>
-        </div>
 
         {/* Wallet chip */}
         <button
