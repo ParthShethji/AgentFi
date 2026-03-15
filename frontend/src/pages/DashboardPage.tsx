@@ -56,6 +56,7 @@ export default function DashboardPage() {
   const { userId, selectedAgent, setSelectedAgent, createdAgentId, walletChainId } = useApp();
   const [borrowAmount, setBorrowAmount] = useState('100');
   const [borrowQuote, setBorrowQuote] = useState<Awaited<ReturnType<typeof api.getBorrowQuote>> | null>(null);
+  const [triggerFeedback, setTriggerFeedback] = useState<Record<string, { message: string; ok: boolean }>>({});
 
   const { data: userAgentsData, isLoading: agentsLoading } = useQuery({
     queryKey: ['userAgents', userId],
@@ -79,9 +80,22 @@ export default function DashboardPage() {
 
   const triggerMutation = useMutation({
     mutationFn: (agentId: string) => api.runAgent(agentId),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['adminOverview'] });
       queryClient.invalidateQueries({ queryKey: ['userAgents'] });
+      const agentId = data.agentId;
+      setTriggerFeedback((prev) => ({
+        ...prev,
+        [agentId]: { message: data.message || (data.triggered ? 'Cycle triggered' : 'Already running'), ok: data.triggered },
+      }));
+      setTimeout(() => setTriggerFeedback((prev) => { const n = { ...prev }; delete n[agentId]; return n; }), 4000);
+    },
+    onError: (_err, agentId) => {
+      setTriggerFeedback((prev) => ({
+        ...prev,
+        [agentId]: { message: 'Failed to trigger', ok: false },
+      }));
+      setTimeout(() => setTriggerFeedback((prev) => { const n = { ...prev }; delete n[agentId]; return n; }), 4000);
     },
   });
 
@@ -169,12 +183,21 @@ export default function DashboardPage() {
                           <button
                             className="btn btn-ghost"
                             style={{ height: 34, padding: '0 12px', fontSize: 12 }}
+                            disabled={triggerMutation.isPending && triggerMutation.variables === agent.agent_id}
                             onClick={(event) => {
                               event.stopPropagation();
                               triggerMutation.mutate(agent.agent_id);
                             }}
                           >
-                            <Play size={12} /> Run now
+                            {triggerMutation.isPending && triggerMutation.variables === agent.agent_id ? (
+                              <><RefreshCw size={12} className="spin" /> Triggering…</>
+                            ) : triggerFeedback[agent.agent_id] ? (
+                              <span style={{ color: triggerFeedback[agent.agent_id].ok ? 'var(--success)' : 'var(--danger)' }}>
+                                {triggerFeedback[agent.agent_id].message}
+                              </span>
+                            ) : (
+                              <><Play size={12} /> Run now</>
+                            )}
                           </button>
                           <button
                             className="btn btn-ghost"
