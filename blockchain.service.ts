@@ -349,18 +349,33 @@ export async function requestLoan({
 
   logger.info(`[blockchain] requestLoan borrower=${borrowerWallet} lender=${lenderWallet}`);
 
+  // ── Fallback 1: Read nextLoanId BEFORE the tx so we know the expected id ──
+  let preNextLoanId: number | null = null;
+  try {
+    preNextLoanId = Number(await contract.nextLoanId());
+    logger.info(`[blockchain] requestLoan pre-tx nextLoanId=${preNextLoanId}`);
+  } catch (err: any) {
+    logger.warn(`[blockchain] requestLoan could not read nextLoanId pre-tx: ${err.message}`);
+  }
+
+  // ── Fallback 2: staticCall to simulate and get return value ──
   let expectedLoanId: number | null = null;
   if (typeof requestLoanFn?.staticCall === "function") {
-    expectedLoanId = Number(
-      await requestLoanFn.staticCall(
-        borrowerWallet,
-        lenderWallet,
-        principalBig,
-        interestBig,
-        borrowerEnsHash,
-        lenderEnsHash
-      )
-    );
+    try {
+      expectedLoanId = Number(
+        await requestLoanFn.staticCall(
+          borrowerWallet,
+          lenderWallet,
+          principalBig,
+          interestBig,
+          borrowerEnsHash,
+          lenderEnsHash
+        )
+      );
+      logger.info(`[blockchain] requestLoan staticCall expectedLoanId=${expectedLoanId}`);
+    } catch (err: any) {
+      logger.warn(`[blockchain] requestLoan staticCall failed (non-fatal): ${err.message}`);
+    }
   }
 
   const result = await enqueue("platform", () =>
@@ -382,35 +397,72 @@ export async function requestLoan({
   if (!receipt) throw new Error("Tx Receipt not found");
 
   const candidateLoanIds = new Set<number>();
+
+  // ── Source 1: staticCall result ──
   if (expectedLoanId && expectedLoanId > 0) {
     candidateLoanIds.add(expectedLoanId);
+    logger.info(`[blockchain] requestLoan candidate from staticCall: ${expectedLoanId}`);
   }
 
+  // ── Source 2: pre-tx nextLoanId (the created loan should be this value) ──
+  if (preNextLoanId && preNextLoanId > 0) {
+    candidateLoanIds.add(preNextLoanId);
+    logger.info(`[blockchain] requestLoan candidate from preNextLoanId: ${preNextLoanId}`);
+  }
+
+  // ── Source 3: Parse LoanRequested event from receipt logs ──
   const contractAddress = String(contract.target || "").toLowerCase();
+  logger.info(`[blockchain] requestLoan parsing ${receipt.logs.length} logs, contractAddress=${contractAddress}`);
+
   for (const log of receipt.logs) {
-    if (contractAddress && String(log.address || "").toLowerCase() !== contractAddress) {
+    const logAddress = String(log.address || "").toLowerCase();
+    if (contractAddress && logAddress !== contractAddress) {
       continue;
     }
 
     try {
-      const parsed = contract.interface.parseLog(log as any);
+      const parsed = contract.interface.parseLog({ topics: log.topics as string[], data: log.data });
       if (parsed?.name === "LoanRequested") {
         const parsedLoanId = Number(parsed.args?.[0] ?? parsed.args?.loanId ?? 0);
+        logger.info(`[blockchain] requestLoan candidate from LoanRequested event: ${parsedLoanId}`);
         if (parsedLoanId > 0) {
           candidateLoanIds.add(parsedLoanId);
         }
       }
-    } catch {
+    } catch (parseErr: any) {
+      logger.warn(`[blockchain] requestLoan log parse failed for topic ${log.topics?.[0]}: ${parseErr.message}`);
       continue;
     }
   }
 
+  // ── Source 4: Post-tx nextLoanId fallback ──
+  if (candidateLoanIds.size === 0) {
+    try {
+      const postNextLoanId = Number(await contract.nextLoanId());
+      if (postNextLoanId > 1) {
+        candidateLoanIds.add(postNextLoanId - 1);
+        logger.info(`[blockchain] requestLoan candidate from post-tx nextLoanId: ${postNextLoanId - 1}`);
+      }
+    } catch (err: any) {
+      logger.warn(`[blockchain] requestLoan could not read nextLoanId post-tx: ${err.message}`);
+    }
+  }
+
+  logger.info(`[blockchain] requestLoan total candidates: [${[...candidateLoanIds].join(", ")}]`);
+
   let loanId = 0;
   for (const candidate of candidateLoanIds) {
-    const loan = await contract.getLoan(candidate);
-    if (Number(loan.loanId) === candidate && Number(loan.status) !== 0) {
-      loanId = candidate;
-      break;
+    try {
+      const loan = await contract.getLoan(candidate);
+      const onChainLoanId = Number(loan.loanId);
+      const onChainStatus = Number(loan.status);
+      logger.info(`[blockchain] requestLoan verifying candidate=${candidate} onChainLoanId=${onChainLoanId} status=${onChainStatus}`);
+      if (onChainLoanId === candidate && onChainStatus !== 0) {
+        loanId = candidate;
+        break;
+      }
+    } catch (err: any) {
+      logger.warn(`[blockchain] requestLoan getLoan(${candidate}) failed: ${err.message}`);
     }
   }
 
@@ -418,6 +470,7 @@ export async function requestLoan({
     throw new Error(`[blockchain] requestLoan could not resolve created loanId from tx ${result.txHash}`);
   }
 
+  logger.info(`[blockchain] requestLoan resolved loanId=${loanId}`);
   return { ...result, loanId, collateralLocked: collateralNeeded };
 }
 
