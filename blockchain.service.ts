@@ -1,0 +1,660 @@
+/**
+ * blockchain.service.ts
+ *
+ * All on-chain reads and writes go through here.
+ * Nothing else in the codebase touches ethers.js directly.
+ */
+
+import { ethers, Contract, JsonRpcProvider, Wallet } from "ethers";
+import { getAgentPrivateKey, loadAgentPrivateKey } from "./config/agentKeys";
+
+function loadAbi() {
+  if (process.env.NODE_ENV === "test") {
+    return [];
+  }
+
+  const path = require("path");
+  const candidates = [
+    path.resolve(__dirname, "./contracts/AgentFiLending.abi.json"),
+    path.resolve(__dirname, "./artifacts/contracts/AgentFiLending.sol/AgentFiLending.json"),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const abiJson = require(candidate);
+      const abi = Array.isArray(abiJson) ? abiJson : abiJson.abi || [];
+      console.log(`[blockchain] ABI loaded from: ${candidate} (${abi.length} entries)`);
+      return abi;
+    } catch {
+      console.warn(`[blockchain] ABI not found at: ${candidate}`);
+      continue;
+    }
+  }
+
+  console.error("[blockchain] CRITICAL: No ABI file found — all contract calls will fail with 'no matching fragment'.");
+  return [];
+}
+
+const ABI = loadAbi();
+const logger = process.env.NODE_ENV === "test" ? console : require("./utils/logger");
+
+// ─── Provider + Signer setup ──────────────────────────────────────────────────
+
+// Base Sepolia — lending contract, USDC, gas funding
+const provider = new JsonRpcProvider(process.env.BASE_SEPOLIA_RPC_URL || process.env.RPC_URL || "");
+
+// Ethereum Sepolia (L1) — ENS only. ENS names live on L1, not on Base.
+// Falls back to provider if L1_SEPOLIA_RPC_URL is not set (local dev).
+const l1Provider = process.env.L1_SEPOLIA_RPC_URL
+  ? new JsonRpcProvider(process.env.L1_SEPOLIA_RPC_URL)
+  : provider;
+
+const platformWallet = new Wallet(process.env.PLATFORM_PRIVATE_KEY || "0x0123456789012345678901234567890123456789012345678901234567890123", provider);
+
+// Deployer wallet (account #0) — owns MockERC20 and can mint
+const deployerWallet = new Wallet(process.env.DEPLOYER_PRIVATE_KEY || process.env.PLATFORM_PRIVATE_KEY || "0x0123456789012345678901234567890123456789012345678901234567890123", provider);
+
+const contract = new Contract(
+  process.env.CONTRACT_ADDRESS || ethers.ZeroAddress,
+  ABI,
+  platformWallet
+);
+
+// USDC contract (MockERC20 with mint for demo)
+const USDC_ABI = [
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function balanceOf(address account) view returns (uint256)",
+  "function mint(address to, uint256 amount)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+];
+// Connect to deployerWallet so mint() (onlyOwner) works
+const usdc = new Contract(process.env.USDC_ADDRESS || ethers.ZeroAddress, USDC_ABI, deployerWallet);
+
+const USDC_DECIMALS = 6n;
+
+// ─── Sequential Queues for Nonce Safety ──────────────────────────────────────
+
+type WalletType = "platform" | "deployer";
+
+// Map to hold the last transaction promise for each critical shared account.
+// This prevents multiple transactions from fetching the same nonce in parallel.
+const queues: Record<WalletType, Promise<any>> = {
+  platform: Promise.resolve(),
+  deployer: Promise.resolve(),
+};
+
+/**
+ * Enqueues a transaction action to be executed sequentially for a given wallet type.
+ */
+async function enqueue<T>(type: WalletType, action: () => Promise<T>): Promise<T> {
+  const previous = queues[type];
+  const next = (async () => {
+    try {
+      await previous;
+    } catch (err) {
+      // Don't let previous failures block the queue indefinitely, 
+      // but log them if they were non-deterministic.
+    }
+    return action();
+  })();
+  queues[type] = next;
+  return next;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+export function toUsdc(amount: number | string): bigint {
+  return ethers.parseUnits(String(amount), Number(USDC_DECIMALS));
+}
+
+export function fromUsdc(bigintVal: bigint): number {
+  return Number(ethers.formatUnits(bigintVal, Number(USDC_DECIMALS)));
+}
+
+async function waitForTx(txPromise: Promise<any>, label: string) {
+  const tx = await txPromise;
+  logger.info(`[blockchain] ${label} tx sent: ${tx.hash}`);
+  const receipt = await tx.wait(1); 
+  if (receipt.status !== 1) throw new Error(`[blockchain] ${label} tx reverted: ${tx.hash}`);
+  logger.info(`[blockchain] ${label} confirmed in block ${receipt.blockNumber}`);
+  return {
+    txHash: tx.hash,
+    blockNumber: receipt.blockNumber,
+    gasUsed: receipt.gasUsed.toString(),
+    receipt,
+  };
+}
+
+function isNonceError(error: any) {
+  const msg = String(error?.message || "").toLowerCase();
+  return (
+    msg.includes("nonce too low") ||
+    msg.includes("replacement transaction underpriced") ||
+    msg.includes("already known")
+  );
+}
+
+async function assertBytecodePresent(address: string, label: string) {
+  if (process.env.NODE_ENV === "test") return;
+  const code = await provider.getCode(address);
+  if (!code || code === "0x") {
+    const rpc = process.env.RPC_URL || "(missing RPC_URL)";
+    throw new Error(
+      `[chain-config] ${label} has no bytecode at ${address} on ${rpc}. ` +
+      `If you restarted local Hardhat node, run 'npm run deploy:localhost' and restart backend.`
+    );
+  }
+}
+
+async function waitForTxWithRetry(
+  createTx: () => Promise<any>,
+  label: string,
+  retries: number = 2
+) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await waitForTx(createTx(), label);
+    } catch (error) {
+      if (attempt < retries && isNonceError(error)) {
+        attempt += 1;
+        logger.warn(`[blockchain] ${label} nonce conflict, retry attempt=${attempt}`);
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+// ─── Registration ──────────────────────────────────────────────────────────────
+
+export async function registerAgent(agentWallet: string, initialScore: number, ensName: string) {
+  const ensNameHash = ethers.keccak256(ethers.toUtf8Bytes(ensName));
+  logger.info(`[blockchain] registering agent ${agentWallet} score=${initialScore} ensName=${ensName}`);
+  return enqueue("platform", () =>
+    waitForTxWithRetry(
+      () => contract.registerAgent(agentWallet, initialScore, ensNameHash),
+      `registerAgent(${agentWallet})`
+    )
+  );
+}
+
+export async function ensureAgentRegistered(agentWallet: string, ensName: string, initialScore: number = 25) {
+  const rep = await getAgentRep(agentWallet);
+  if (rep.lastActivityAt > 0) {
+    return { alreadyRegistered: true, score: rep.score };
+  }
+
+  const safeScore = Math.max(0, Math.floor(initialScore || 25));
+  await registerAgent(agentWallet, safeScore, ensName);
+  return { alreadyRegistered: false, score: safeScore };
+}
+
+// ─── Reputation reads ─────────────────────────────────────────────────────────
+
+export async function getAgentRep(agentWallet: string) {
+  await assertBytecodePresent(process.env.CONTRACT_ADDRESS || ethers.ZeroAddress, "AgentFiLending");
+  const rep = await contract.getAgentRep(agentWallet);
+  return {
+    score: Number(rep.score),
+    lastActivityAt: Number(rep.lastActivityAt),
+    totalLoans: Number(rep.totalLoans),
+    cleanRepayments: Number(rep.cleanRepayments),
+    defaults: Number(rep.defaults),
+  };
+}
+
+export async function getRequiredCollateral(borrowerWallet: string, principalUsdc: number) {
+  await assertBytecodePresent(process.env.CONTRACT_ADDRESS || ethers.ZeroAddress, "AgentFiLending");
+  const collateral = await contract.requiredCollateral(
+    borrowerWallet,
+    toUsdc(principalUsdc)
+  );
+  return fromUsdc(collateral);
+}
+
+export async function getMaxLoanSize(borrowerWallet: string) {
+  await assertBytecodePresent(process.env.CONTRACT_ADDRESS || ethers.ZeroAddress, "AgentFiLending");
+  const max = await contract.maxLoanSize(borrowerWallet);
+  return fromUsdc(max);
+}
+
+export async function checkAllowance(ownerWallet: string) {
+  await assertBytecodePresent(process.env.USDC_ADDRESS || ethers.ZeroAddress, "MockUSDC");
+  const spender = process.env.CONTRACT_ADDRESS || ethers.ZeroAddress;
+  const allowance = await usdc.allowance(ownerWallet, spender);
+  return fromUsdc(allowance);
+}
+
+export async function checkBalance(walletAddress: string) {
+  await assertBytecodePresent(process.env.USDC_ADDRESS || ethers.ZeroAddress, "MockUSDC");
+  const balance = await usdc.balanceOf(walletAddress);
+  return fromUsdc(balance);
+}
+
+export async function getEthBalance(walletAddress: string) {
+  const balance = await provider.getBalance(walletAddress);
+  return Number(ethers.formatEther(balance));
+}
+
+export async function getWalletFundingSnapshot(walletAddress: string) {
+  const [ethBalance, usdcBalance] = await Promise.all([
+    getEthBalance(walletAddress),
+    checkBalance(walletAddress),
+  ]);
+
+  return {
+    ethBalance,
+    usdcBalance,
+    usdcAddress: process.env.USDC_ADDRESS || null,
+    contractAddress: process.env.CONTRACT_ADDRESS || null,
+  };
+}
+
+/**
+ * Mint MockERC20 USDC to a wallet address.
+ * Only works when platformWallet is the MockERC20 owner (deployer account).
+ * For demo/hackathon use only.
+ */
+export async function mintUsdc(toAddress: string, amountUsdc: number) {
+  return enqueue("deployer", async () => {
+    const amount = toUsdc(amountUsdc);
+    const result = await waitForTxWithRetry(
+      () => usdc.mint(toAddress, amount),
+      `mintUsdc(${toAddress}, ${amountUsdc})`
+    );
+    logger.info(`[blockchain] minted ${amountUsdc} USDC to ${toAddress}`);
+    return result;
+  });
+}
+
+/**
+ * Approve the lending contract to spend USDC from a given wallet.
+ * Requires the wallet's private key.
+ */
+export async function approveUsdc(walletPrivateKey: string, amountUsdc: number) {
+  const wallet = new Wallet(walletPrivateKey, provider);
+  const usdcAsWallet = new Contract(process.env.USDC_ADDRESS || ethers.ZeroAddress, USDC_ABI, wallet);
+  const amount = toUsdc(amountUsdc);
+  const tx = await usdcAsWallet.approve(process.env.CONTRACT_ADDRESS || ethers.ZeroAddress, amount);
+  await tx.wait(1);
+  logger.info(`[blockchain] approved ${amountUsdc} USDC from ${wallet.address}`);
+}
+
+/**
+ * Send ETH from the deployer wallet to an agent wallet for gas.
+ * For demo/hackathon use only.
+ */
+export async function fundEth(toAddress: string, amountEth: string = "1.0") {
+  return enqueue("deployer", async () => {
+    const result = await waitForTxWithRetry(
+      () =>
+        deployerWallet.sendTransaction({
+          to: toAddress,
+          value: ethers.parseEther(amountEth),
+        }),
+      `fundEth(${toAddress}, ${amountEth})`
+    );
+    logger.info(`[blockchain] funded ${amountEth} ETH to ${toAddress}`);
+    return result;
+  });
+}
+
+// ─── Loan lifecycle ───────────────────────────────────────────────────────────
+
+export async function requestLoan({
+  borrowerWallet,
+  lenderWallet,
+  principalUsdc,
+  interestUsdc,
+  borrowerEns,
+  lenderEns,
+}: {
+  borrowerWallet: string;
+  lenderWallet: string;
+  principalUsdc: number;
+  interestUsdc: number;
+  borrowerEns: string;
+  lenderEns: string;
+}) {
+  const principalBig = toUsdc(principalUsdc);
+  const interestBig  = toUsdc(interestUsdc);
+  const borrowerEnsHash = ethers.keccak256(ethers.toUtf8Bytes(borrowerEns));
+  const lenderEnsHash   = ethers.keccak256(ethers.toUtf8Bytes(lenderEns));
+  const requestLoanFn: any = contract.requestLoan;
+
+  const collateralNeeded = await getRequiredCollateral(borrowerWallet, principalUsdc);
+  if (collateralNeeded > 0) {
+    const allowance = await checkAllowance(borrowerWallet);
+    if (allowance < collateralNeeded) {
+      throw new Error(
+        `Borrower collateral allowance insufficient. Required: ${collateralNeeded} USDC, Approved: ${allowance} USDC`
+      );
+    }
+    const balance = await checkBalance(borrowerWallet);
+    if (balance < collateralNeeded) {
+      throw new Error(
+        `Borrower USDC balance too low for collateral. Required: ${collateralNeeded} USDC, Balance: ${balance} USDC`
+      );
+    }
+  }
+
+  const lenderAllowance = await checkAllowance(lenderWallet);
+  if (lenderAllowance < principalUsdc) {
+    throw new Error(
+      `Lender allowance insufficient. Required: ${principalUsdc} USDC, Approved: ${lenderAllowance} USDC`
+    );
+  }
+
+  logger.info(`[blockchain] requestLoan borrower=${borrowerWallet} lender=${lenderWallet}`);
+
+  let expectedLoanId: number | null = null;
+  if (typeof requestLoanFn?.staticCall === "function") {
+    expectedLoanId = Number(
+      await requestLoanFn.staticCall(
+        borrowerWallet,
+        lenderWallet,
+        principalBig,
+        interestBig,
+        borrowerEnsHash,
+        lenderEnsHash
+      )
+    );
+  }
+
+  const result = await enqueue("platform", () =>
+    waitForTxWithRetry(
+      () =>
+        requestLoanFn(
+          borrowerWallet,
+          lenderWallet,
+          principalBig,
+          interestBig,
+          borrowerEnsHash,
+          lenderEnsHash
+        ),
+      "requestLoan"
+    )
+  );
+
+  const receipt = result.receipt || await provider.getTransactionReceipt(result.txHash);
+  if (!receipt) throw new Error("Tx Receipt not found");
+
+  const candidateLoanIds = new Set<number>();
+  if (expectedLoanId && expectedLoanId > 0) {
+    candidateLoanIds.add(expectedLoanId);
+  }
+
+  const contractAddress = String(contract.target || "").toLowerCase();
+  for (const log of receipt.logs) {
+    if (contractAddress && String(log.address || "").toLowerCase() !== contractAddress) {
+      continue;
+    }
+
+    try {
+      const parsed = contract.interface.parseLog(log as any);
+      if (parsed?.name === "LoanRequested") {
+        const parsedLoanId = Number(parsed.args?.[0] ?? parsed.args?.loanId ?? 0);
+        if (parsedLoanId > 0) {
+          candidateLoanIds.add(parsedLoanId);
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  let loanId = 0;
+  for (const candidate of candidateLoanIds) {
+    const loan = await contract.getLoan(candidate);
+    if (Number(loan.loanId) === candidate && Number(loan.status) !== 0) {
+      loanId = candidate;
+      break;
+    }
+  }
+
+  if (loanId <= 0) {
+    throw new Error(`[blockchain] requestLoan could not resolve created loanId from tx ${result.txHash}`);
+  }
+
+  return { ...result, loanId, collateralLocked: collateralNeeded };
+}
+
+export async function fundLoan(loanId: number) {
+  logger.info(`[blockchain] fundLoan loanId=${loanId}`);
+  return enqueue("platform", () => 
+    waitForTxWithRetry(() => contract.fundLoan(loanId), `fundLoan(${loanId})`)
+  );
+}
+
+export async function repayLoan(loanId: number, borrowerWallet: string, profitGeneratedUsdc: number) {
+  const loan = await getLoan(loanId);
+  const totalOwed = loan.principalUsdc + loan.interestUsdc;
+
+  const allowance = await checkAllowance(borrowerWallet);
+  if (allowance < totalOwed) {
+    throw new Error(`Borrower repayment allowance insufficient.`);
+  }
+
+  const profitBig = toUsdc(profitGeneratedUsdc || 0);
+  const privateKey =
+    process.env[`AGENT_KEY_${borrowerWallet.toLowerCase()}`] ||
+    process.env.AGENT_PRIVATE_KEY ||
+    getAgentPrivateKey(borrowerWallet) ||
+    await loadAgentPrivateKey(borrowerWallet);
+
+  if (!privateKey) {
+    throw new Error(`Borrower private key not found for wallet ${borrowerWallet}`);
+  }
+
+  const borrowerContract = contract.connect(
+    new Wallet(privateKey, provider)
+  ) as Contract;
+
+  return waitForTx(
+    borrowerContract.repayLoan?.(loanId, profitBig) as Promise<any>,
+    `repayLoan(${loanId})`
+  );
+}
+
+export async function repayPartial(loanId: number, borrowerWallet: string, partialAmountUsdc: number) {
+  logger.info(`[blockchain] repayPartial loanId=${loanId} partial=${partialAmountUsdc}`);
+  return enqueue("platform", () =>
+    waitForTxWithRetry(
+      () => contract.repayPartial(loanId, toUsdc(partialAmountUsdc)),
+      `repayPartial(${loanId})`
+    )
+  );
+}
+
+export async function liquidateLoan(loanId: number) {
+  return enqueue("platform", () =>
+    waitForTxWithRetry(() => contract.liquidateLoan(loanId), `liquidateLoan(${loanId})`)
+  );
+}
+
+export async function setReputation(agentWallet: string, newScore: number, reason: string) {
+  return enqueue("platform", () =>
+    waitForTxWithRetry(
+      () => contract.setReputation(agentWallet, newScore, reason),
+      `setReputation(${agentWallet})`
+    )
+  );
+}
+
+export async function getLoan(loanId: number) {
+  const loan = await contract.getLoan(loanId);
+  return {
+    loanId: Number(loan.loanId),
+    borrower: loan.borrower,
+    lender: loan.lender,
+    principalUsdc: fromUsdc(loan.principal),
+    collateralUsdc: fromUsdc(loan.collateral),
+    interestUsdc: fromUsdc(loan.interestAmount),
+    dueAt: new Date(Number(loan.dueAt) * 1000),
+    repaidAt: loan.repaidAt > 0 ? new Date(Number(loan.repaidAt) * 1000) : null,
+    status: ["None","Requested","Active","Repaid","Defaulted","Liquidated"][loan.status as number],
+  };
+}
+
+export async function getBorrowerLoanIds(agentWallet: string) {
+  const ids: bigint[] = await contract.getBorrowerLoans(agentWallet);
+  return ids.map(Number);
+}
+
+export async function getLenderLoanIds(agentWallet: string) {
+  const ids: bigint[] = await contract.getLenderLoans(agentWallet);
+  return ids.map(Number);
+}
+
+export function onReputationUpdated(callback: (data: any) => void) {
+  contract.on("ReputationUpdated", (agent: string, oldScore: bigint, newScore: bigint, reason: string, event: any) => {
+    callback({
+      agent,
+      oldScore: Number(oldScore),
+      newScore: Number(newScore),
+      reason,
+      txHash: event.log.transactionHash,
+      blockNumber: event.log.blockNumber,
+    });
+  });
+}
+
+export function onLoanFunded(callback: (data: any) => void) {
+  contract.on("LoanFunded", (loanId: bigint, fundedAt: bigint, event: any) => {
+    callback({
+      loanId: Number(loanId),
+      fundedAt: new Date(Number(fundedAt) * 1000),
+      txHash: event.log.transactionHash,
+    });
+  });
+}
+
+export function onLoanRepaid(callback: (data: any) => void) {
+  contract.on("LoanRepaid", (loanId: bigint, repaidAt: bigint, withProfit: bigint, event: any) => {
+    callback({
+      loanId: Number(loanId),
+      repaidAt: new Date(Number(repaidAt) * 1000),
+      withProfit: Number(withProfit),
+      txHash: event.log.transactionHash,
+    });
+  });
+}
+
+// ─── ENS Identity Verification ──────────────────────────────────────────────
+
+// Minimal ENS Public Resolver ABI — only the methods we use
+const ENS_RESOLVER_ABI = [
+  "function addr(bytes32 node) view returns (address)",
+  "function text(bytes32 node, string key) view returns (string)",
+  "function setText(bytes32 node, string key, string value)",
+];
+
+/**
+ * Returns a namehash for an ENS domain using ethers built-in.
+ * Example: namehash("alice.eth")
+ */
+function ensNamehash(name: string): string {
+  return ethers.namehash(name);
+}
+
+/**
+ * Resolves an ENS name to its address via the ENS Public Resolver.
+ * Returns null if ENS_RESOLVER_ADDRESS is not configured (local dev mode).
+ */
+export async function resolveEnsToAddress(ensName: string): Promise<string | null> {
+  const resolverAddress = process.env.ENS_RESOLVER_ADDRESS;
+  if (!resolverAddress) {
+    logger.warn(`[ens] ENS_RESOLVER_ADDRESS not set – skipping forward resolution for ${ensName}`);
+    return null;
+  }
+  // Use l1Provider: ENS names from sepolia.primary.ens.domains live on Ethereum Sepolia, not Base Sepolia
+  const resolver = new ethers.Contract(resolverAddress, ENS_RESOLVER_ABI, l1Provider);
+  const node = ensNamehash(ensName);
+  const addr = await resolver.addr(node);
+  return addr as string;
+}
+
+/**
+ * Performs a reverse lookup from a wallet address to its ENS name.
+ * Uses the Base Sepolia reverse resolver (addr.reverse).
+ * Returns null if ENS is not configured.
+ */
+export async function resolveAddressToEns(wallet: string): Promise<string | null> {
+  const resolverAddress = process.env.ENS_RESOLVER_ADDRESS;
+  if (!resolverAddress) {
+    logger.warn(`[ens] ENS_RESOLVER_ADDRESS not set – skipping reverse resolution for ${wallet}`);
+    return null;
+  }
+  try {
+    // Use l1Provider: reverse ENS registry (addr.reverse) lives on Ethereum Sepolia
+    const ensName = await l1Provider.lookupAddress(wallet);
+    return ensName;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetches an ENS Text Record for a given ENS name and key.
+ * Returns null if ENS is not configured.
+ */
+export async function getEnsTextRecord(ensName: string, key: string): Promise<string | null> {
+  const resolverAddress = process.env.ENS_RESOLVER_ADDRESS;
+  if (!resolverAddress) {
+    logger.warn(`[ens] ENS_RESOLVER_ADDRESS not set – skipping text record fetch for ${ensName}`);
+    return null;
+  }
+  // Use l1Provider: text records are stored on the Ethereum Sepolia resolver
+  const resolver = new ethers.Contract(resolverAddress, ENS_RESOLVER_ABI, l1Provider);
+  const node = ensNamehash(ensName);
+  const value = await resolver.text(node, key);
+  return value as string;
+}
+
+/**
+ * Verify agent ENS integrity.
+ * Checks:
+ *  1. On-chain contract binding: contract.verifyEns(ensNameHash, agentWallet) == true
+ *  2. Forward ENS resolution: ENS name resolves to expected wallet (when resolver configured)
+ *
+ * Anti-sybil is enforced via ZK human verification at the application layer,
+ * not via platform-owned ENS subdomains.
+ */
+export async function verifyAgentEnsIntegrity(
+  agentWallet: string,
+  ensName: string,
+): Promise<void> {
+  const ensNameHash = ethers.keccak256(ethers.toUtf8Bytes(ensName));
+  const resolverConfigured = !!process.env.ENS_RESOLVER_ADDRESS;
+
+  // ── Check 1: On-chain contract binding (always runs) ──
+  try {
+    const isValid: boolean = await contract.verifyEns(ensNameHash, agentWallet);
+    if (!isValid) {
+      throw new Error(
+        `ENS_MISMATCH: On-chain contract binding failed. ` +
+        `ENS "${ensName}" is not bound to wallet ${agentWallet} in lending contract.`
+      );
+    }
+  } catch (err: any) {
+    if (err.message.startsWith("ENS_MISMATCH")) throw err;
+    logger.warn(`[ens] contract.verifyEns call failed (non-fatal in local dev): ${err.message}`);
+  }
+
+  if (!resolverConfigured) {
+    return;
+  }
+
+  // ── Check 2: Forward ENS resolution ──
+  const resolvedAddress = await resolveEnsToAddress(ensName);
+  if (resolvedAddress && resolvedAddress.toLowerCase() !== agentWallet.toLowerCase()) {
+    throw new Error(
+      `ENS_MISMATCH: Forward resolution of "${ensName}" returned ${resolvedAddress}, ` +
+      `expected ${agentWallet}.`
+    );
+  }
+
+  logger.info(`[ens] integrity verified for ${ensName} → ${agentWallet}`);
+}

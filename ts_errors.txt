@@ -1,0 +1,12 @@
+﻿lending.routes.ts(59,44): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+lending.routes.ts(173,52): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+test/AgentFiLending.test.ts(2,10): error TS2305: Module '"hardhat"' has no exported member 'ethers'.
+test/AgentFiLending.test.ts(3,35): error TS2307: Cannot find module '@nomicfoundation/hardhat-ethers/signers' or its corresponding type declarations.
+test/AgentFiLending.test.ts(45,15): error TS2339: Property 'revertedWith' does not exist on type 'Assertion'.
+test/AgentFiLending.test.ts(51,15): error TS2339: Property 'revertedWith' does not exist on type 'Assertion'.
+test/AgentFiLending.test.ts(97,12): error TS2339: Property 'emit' does not exist on type 'Assertion'.
+test/lending.service.test.ts(3,21): error TS2307: Cannot find module '../config/db' or its corresponding type declarations.
+test/lending.service.test.ts(4,24): error TS2307: Cannot find module '../config/redis' or its corresponding type declarations.
+test/schema.test.ts(1,23): error TS2307: Cannot find module 'pg-mem' or its corresponding type declarations.
