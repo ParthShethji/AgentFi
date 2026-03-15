@@ -1016,8 +1016,9 @@ class AgentRuntimeManager {
 
     await updateAgentRuntime(agent.agent_id, {
       last_execution_at: new Date(),
-      last_result_summary: `Posted lend offer ${result.offerId}`,
+      last_result_summary: `Posted lend offer ${result.offerId} — up to ${maxAmountUsdc} USDC at ${ratePct}%`,
       total_cycles: agent.total_cycles + 1,
+      total_lent_usdc: Number(agent.total_lent_usdc || 0) + maxAmountUsdc,
       updated_at: new Date(),
     });
   }
@@ -1102,6 +1103,8 @@ class AgentRuntimeManager {
     currentPositions.currentLoanUsdc = requestedAmountUsdc;
 
     await updateAgentRuntime(agent.agent_id, {
+      total_borrowed_usdc: Number(agent.total_borrowed_usdc || 0) + requestedAmountUsdc,
+      last_result_summary: `Borrowed ${requestedAmountUsdc} USDC — trading in progress…`,
       current_positions_json: JSON.stringify(currentPositions),
       updated_at: new Date(),
     });
@@ -1126,10 +1129,9 @@ class AgentRuntimeManager {
 
     await updateAgentRuntime(agent.agent_id, {
       last_execution_at: new Date(),
-      last_result_summary: `Repaid match ${borrowResult.matchId} with ${realizedProfit} USDC profit`,
+      last_result_summary: `Repaid match ${borrowResult.matchId} with +${realizedProfit} USDC profit`,
       total_cycles: agent.total_cycles + 1,
       total_profit_usdc: Number(agent.total_profit_usdc || 0) + realizedProfit,
-      total_borrowed_usdc: Number(agent.total_borrowed_usdc || 0) + requestedAmountUsdc,
       current_positions_json: JSON.stringify(currentPositions),
       updated_at: new Date(),
     });
