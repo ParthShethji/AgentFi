@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Vault, FileText, Zap } from 'lucide-react';
-import ThreeGlobe from '../components/Globe';
+// import ThreeGlobe from '../components/Globe';
 import AmbientBackground from '../components/AmbientBackground';
 import { useApp } from '../context/AppContext';
 
@@ -64,8 +64,8 @@ export default function LandingPage() {
         alignItems: 'center',
         justifyContent: 'center',
       }}>
-        {/* Globe */}
-        <ThreeGlobe />
+        {/* Globe (commented — @react-three/fiber not installed) */}
+        {/* <ThreeGlobe /> */}
 
         {/* Hero copy — centered over globe */}
         <motion.div

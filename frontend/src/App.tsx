@@ -9,6 +9,7 @@ import LandingPage from './pages/LandingPage';
 import OnboardingPage from './pages/OnboardingPage';
 import CreateAgentPage from './pages/CreateAgentPage';
 import DashboardPage from './pages/DashboardPage';
+import SettlementsPage from './pages/SettlementsPage';
 import NavBar from './components/NavBar';
 import { useEffect } from 'react';
 
@@ -62,6 +63,15 @@ function AppRoutes() {
           <AnimatedRoute>
             <NavBar activeNav="dashboard" />
             <DashboardPage />
+          </AnimatedRoute>
+        }
+      />
+      <Route
+        path="/settlements"
+        element={
+          <AnimatedRoute>
+            <NavBar activeNav="activity" />
+            <SettlementsPage />
           </AnimatedRoute>
         }
       />
