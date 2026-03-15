@@ -18,6 +18,7 @@ import type {
   Loan,
   GetAgentLoansResponse,
   AgentRep,
+  AdminTransactionsResponse,
 } from "./types/api";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -44,6 +45,7 @@ export type ApiClient = {
   getLoan(loanId: number): Promise<Loan>;
   getAgentLoans(agentId: string, role?: "lender" | "borrower"): Promise<GetAgentLoansResponse>;
   getAgentRep(agentId: string): Promise<AgentRep>;
+  getAdminTransactions(limit?: number, offset?: number, type?: string): Promise<AdminTransactionsResponse>;
 };
 
 function buildHeaders(token?: string) {
@@ -168,6 +170,10 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     },
     getAgentRep(agentId) {
       return callApi<AgentRep>(baseUrl, token, "GET", `/lending/agents/${encodeURIComponent(agentId)}/rep`);
+    },
+    getAdminTransactions(limit = 100, offset = 0, type = "") {
+      const params = `limit=${limit}&offset=${offset}${type ? `&type=${encodeURIComponent(type)}` : ""}`;
+      return callApi<AdminTransactionsResponse>(baseUrl, token, "GET", `/platform/admin/transactions?${params}`);
     },
   };
 }

@@ -104,12 +104,12 @@ export default function DashboardPage() {
     },
   });
   const summary = useMemo(() => {
-    const totalAgents = adminOverview?.agents.length ?? 0;
-    const activeAgents = (adminOverview?.agents ?? []).filter((agent) => agent.runtime_status === 'active').length;
-    const totalProfit = (adminOverview?.agents ?? []).reduce((sum, agent) => sum + Number(agent.total_profit_usdc || 0), 0);
-    const totalBorrowed = (adminOverview?.agents ?? []).reduce((sum, agent) => sum + Number(agent.total_borrowed_usdc || 0), 0);
+    const totalAgents = agents.length;
+    const activeAgents = agents.filter((agent) => (agent.runtime_status || agent.status) === 'active').length;
+    const totalProfit = agents.reduce((sum, agent) => sum + Number(agent.total_profit_usdc || 0), 0);
+    const totalBorrowed = agents.reduce((sum, agent) => sum + Number(agent.total_borrowed_usdc || 0), 0);
     return { totalAgents, activeAgents, totalProfit, totalBorrowed };
-  }, [adminOverview]);
+  }, [agents]);
 
   return (
     <div style={{ minHeight: '100vh', position: 'relative' }}>
@@ -118,9 +118,9 @@ export default function DashboardPage() {
         <div className="section-container" style={{ paddingTop: 24, paddingBottom: 80 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
             <div>
-              <div className="label-ui">Admin View</div>
+              <div className="label-ui">My Dashboard</div>
               <h1 style={{ fontFamily: 'Cormorant Garamond', fontSize: 40, fontWeight: 400, color: 'var(--text-primary)' }}>
-                Autonomous Control Room
+                Your Control Room
               </h1>
             </div>
             <button className="btn btn-ghost" style={{ height: 38, padding: '0 18px', fontSize: 13 }} onClick={() => navigate('/create-agent')}>
@@ -129,10 +129,10 @@ export default function DashboardPage() {
           </div>
 
           <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
-            <StatCard label="Agents" value={overviewLoading ? '...' : summary.totalAgents} />
-            <StatCard label="Running" value={overviewLoading ? '...' : summary.activeAgents} />
-            <StatCard label="Profit" value={overviewLoading ? '...' : `$${summary.totalProfit.toFixed(2)}`} />
-            <StatCard label="Borrowed" value={overviewLoading ? '...' : `$${summary.totalBorrowed.toFixed(2)}`} />
+            <StatCard label="My Agents" value={agentsLoading ? '...' : summary.totalAgents} />
+            <StatCard label="Running" value={agentsLoading ? '...' : summary.activeAgents} />
+            <StatCard label="My Profit" value={agentsLoading ? '...' : `$${summary.totalProfit.toFixed(2)}`} />
+            <StatCard label="My Borrowed" value={agentsLoading ? '...' : `$${summary.totalBorrowed.toFixed(2)}`} />
           </div>
 
           <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.3fr) minmax(0, 0.9fr)', gap: 20, alignItems: 'start' }}>

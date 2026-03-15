@@ -238,3 +238,45 @@ export interface AgentRep {
   collateralPctFor100Usdc?: number;
   maxLoanUsdc?: number;
 }
+
+// ─── Admin Transactions ──────────────────────────────────────────────────────
+
+export interface LoanTransaction {
+  event_id: number;
+  agent_id: string;
+  type: string;
+  amount: number;
+  counterparty_agent_id: string | null;
+  tx_hash: string | null;
+  rep_delta: number;
+  timestamp: string;
+  agent_ens: string;
+  agent_role: string;
+  counterparty_ens: string | null;
+  match_id: number | null;
+  principal_usdc: number | null;
+  interest_usdc: number | null;
+  collateral_usdc: number | null;
+  rate_pct: number | null;
+  match_status: string | null;
+  loan_id_onchain: number | null;
+  funded_at: string | null;
+  repaid_at: string | null;
+}
+
+export interface TransactionAggregates {
+  totalLoans: number;
+  activeLoans: number;
+  repaidLoans: number;
+  defaultedLoans: number;
+  totalPrincipal: number;
+  totalInterest: number;
+  totalCollateral: number;
+  repaidPrincipal: number;
+  repaidInterest: number;
+}
+
+export interface AdminTransactionsResponse {
+  transactions: LoanTransaction[];
+  aggregates: TransactionAggregates;
+}

@@ -482,6 +482,92 @@ router.get("/admin/overview", async (_req, res) => {
   }
 });
 
+router.get("/admin/transactions", async (req, res) => {
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  const typeFilter = typeof req.query.type === "string" ? req.query.type : "";
+
+  try {
+    // Loan-critical event types only
+    const loanTypes = [
+      "loan_borrowed",
+      "loan_funded",
+      "loan_repaid",
+      "loan_partial_default",
+      "loan_liquidated",
+    ];
+
+    const whereType = typeFilter && loanTypes.includes(typeFilter)
+      ? `AND e.type = '${typeFilter}'`
+      : `AND e.type IN (${loanTypes.map((t) => `'${t}'`).join(",")})`;
+
+    const { rows: transactions } = await db(
+      `SELECT e.event_id, e.agent_id, e.type, e.amount, e.counterparty_agent_id,
+              e.tx_hash, e.rep_delta, e.timestamp,
+              a.ens_name AS agent_ens, a.role AS agent_role,
+              ca.ens_name AS counterparty_ens,
+              m.match_id, m.amount_usdc AS principal_usdc, m.interest_usdc,
+              m.collateral_usdc, m.rate_pct, m.status AS match_status,
+              m.loan_id_onchain, m.funded_at, m.repaid_at
+       FROM event_log e
+       JOIN agents a ON a.agent_id = e.agent_id
+       LEFT JOIN agents ca ON ca.agent_id = e.counterparty_agent_id
+       LEFT JOIN matches m ON (
+         (m.borrower_agent_id = e.agent_id AND m.lender_agent_id = e.counterparty_agent_id)
+         OR (m.lender_agent_id = e.agent_id AND m.borrower_agent_id = e.counterparty_agent_id)
+       )
+       WHERE e.amount > 0
+         ${whereType}
+       ORDER BY e.timestamp DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    // Deduplicate matches joined (pick most relevant)
+    const seen = new Set<string>();
+    const deduped = transactions.filter((row: any) => {
+      const key = `${row.event_id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    // Aggregate stats from matches table
+    const { rows: aggRows } = await db(
+      `SELECT
+         COUNT(*) AS total_loans,
+         COUNT(*) FILTER (WHERE status = 'active') AS active_loans,
+         COUNT(*) FILTER (WHERE status = 'repaid') AS repaid_loans,
+         COUNT(*) FILTER (WHERE status IN ('defaulted','liquidated','partial_default')) AS defaulted_loans,
+         COALESCE(SUM(amount_usdc), 0) AS total_principal,
+         COALESCE(SUM(interest_usdc), 0) AS total_interest,
+         COALESCE(SUM(collateral_usdc), 0) AS total_collateral,
+         COALESCE(SUM(amount_usdc) FILTER (WHERE status = 'repaid'), 0) AS repaid_principal,
+         COALESCE(SUM(interest_usdc) FILTER (WHERE status = 'repaid'), 0) AS repaid_interest
+       FROM matches`
+    );
+
+    const agg = aggRows[0] || {};
+
+    return res.json({
+      transactions: deduped,
+      aggregates: {
+        totalLoans: Number(agg.total_loans || 0),
+        activeLoans: Number(agg.active_loans || 0),
+        repaidLoans: Number(agg.repaid_loans || 0),
+        defaultedLoans: Number(agg.defaulted_loans || 0),
+        totalPrincipal: Number(agg.total_principal || 0),
+        totalInterest: Number(agg.total_interest || 0),
+        totalCollateral: Number(agg.total_collateral || 0),
+        repaidPrincipal: Number(agg.repaid_principal || 0),
+        repaidInterest: Number(agg.repaid_interest || 0),
+      },
+    });
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message || "failed to load transactions" });
+  }
+});
+
 function defaultEnabledForRole(role: "lender" | "borrower") {
   return role === "lender"
     ? ["fetch_open_offers", "post_lend_offer", "get_agent_reputation"]
