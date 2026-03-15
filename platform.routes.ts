@@ -405,8 +405,8 @@ router.get("/agents/:agentId/runtime", async (req, res) => {
 
 router.post("/agents/:agentId/run", async (req, res) => {
   try {
-    await agentRuntimeManager.runAgentNow(req.params.agentId, "manual_api");
-    return res.json({ agentId: req.params.agentId, triggered: true });
+    const result = await agentRuntimeManager.runAgentNow(req.params.agentId, "manual_api");
+    return res.json({ agentId: req.params.agentId, triggered: result.started, message: result.message });
   } catch (error: any) {
     return res.status(400).json({ error: error.message || "failed to trigger agent" });
   }

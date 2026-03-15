@@ -30,7 +30,7 @@ export type ApiClient = {
   updateAgentStrategy(agentId: string, strategy: Record<string, unknown>): Promise<unknown>;
   getUserAgents(userId: string): Promise<{ agents: UserAgent[] }>;
   getAgentRuntime(agentId: string): Promise<AgentRuntimeResponse>;
-  runAgent(agentId: string): Promise<{ agentId: string; triggered: boolean }>;
+  runAgent(agentId: string): Promise<{ agentId: string; triggered: boolean; message?: string }>;
   updateAgentStatus(agentId: string, runtimeStatus: "active" | "paused" | "stopped"): Promise<{ agentId: string; runtimeStatus: string }>;
   fundAgent(agentId: string, payload: FundAgentPayload): Promise<{ agentId: string; funded: boolean }>;
   getAdminOverview(): Promise<AdminOverviewResponse>;
@@ -105,7 +105,7 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
       return callApi<AgentRuntimeResponse>(baseUrl, token, "GET", `/platform/agents/${encodeURIComponent(agentId)}/runtime`);
     },
     runAgent(agentId) {
-      return callApi<{ agentId: string; triggered: boolean }>(baseUrl, token, "POST", `/platform/agents/${encodeURIComponent(agentId)}/run`);
+      return callApi<{ agentId: string; triggered: boolean; message?: string }>(baseUrl, token, "POST", `/platform/agents/${encodeURIComponent(agentId)}/run`);
     },
     updateAgentStatus(agentId, runtimeStatus) {
       return callApi<{ agentId: string; runtimeStatus: string }>(

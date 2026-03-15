@@ -807,8 +807,26 @@ class AgentRuntimeManager {
     }
   }
 
-  async runAgentNow(agentId: string, reason: string = "manual") {
-    await this.executeCycle(agentId, reason);
+  async runAgentNow(agentId: string, reason: string = "manual"): Promise<{ started: boolean; message: string }> {
+    if (this.running.has(agentId)) {
+      return { started: false, message: "Agent cycle is already running" };
+    }
+
+    const agent = await loadAgent(agentId);
+    if (!agent) {
+      return { started: false, message: "Agent not found" };
+    }
+    if (agent.status !== "active" || agent.runtime_status !== "active") {
+      return { started: false, message: `Agent is ${agent.runtime_status || agent.status}, not active` };
+    }
+
+    this.clearTimer(agentId);
+
+    void this.executeCycle(agentId, reason).catch((err) => {
+      logger.error(`[runtime:${agentId}]`, "runAgentNow", err?.message || "unhandled cycle error");
+    });
+
+    return { started: true, message: "Cycle triggered" };
   }
 
   async getAgentRuntime(agentId: string) {
