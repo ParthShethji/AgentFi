@@ -10,13 +10,15 @@ import { connectMetaMask, formatAddress, getEthereumProvider, signMessage } from
 
 const STEP_LABELS = ['Connect', 'Verify ENS', 'ZK Proof'];
 
-const DEFAULT_EMAIL = 'user@agentfi.demo';
-
 const variants = {
   enter: (dir: number) => ({ y: dir > 0 ? 80 : -80, opacity: 0 }),
   center: { y: 0, opacity: 1 },
   exit: (dir: number) => ({ y: dir > 0 ? -60 : 60, opacity: 0 }),
 };
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
 
 export default function OnboardingPage() {
   const navigate = useNavigate();
@@ -41,10 +43,13 @@ export default function OnboardingPage() {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
-  // 🐛 DEBUG: raw address returned by ENS resolver
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailInput, setEmailInput] = useState('');
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [pendingSignature, setPendingSignature] = useState<string | undefined>(undefined);
+  const [pendingMessage, setPendingMessage] = useState<string | undefined>(undefined);
   const [ensResolvedAddress, setEnsResolvedAddress] = useState<string | null>(null);
 
-  // When arriving from create-agent with ?step=0|1|2, open that onboarding step
   useEffect(() => {
     const stepParam = searchParams.get('step');
     if (stepParam !== null) {
@@ -53,14 +58,12 @@ export default function OnboardingPage() {
     }
   }, [searchParams, setStep]);
 
-  // If wallet is connected and already fully verified, redirect to create-agent (avoid loop when wallet was cleared on load)
   useEffect(() => {
     if (walletAddress && zkVerified && verifiedEnsName && userId) {
       navigate('/create-agent', { replace: true });
     }
   }, [walletAddress, zkVerified, verifiedEnsName, userId, navigate]);
 
-  // Debounced ENS format validation
   useEffect(() => {
     if (step !== 1) return;
     if (!ensName || !ensName.includes('.')) {
@@ -88,7 +91,18 @@ export default function OnboardingPage() {
   }, [step, setStep]);
 
   const jumpTo = (s: number) => {
-    if (s < step) { setDir(-1); setStep(s); }
+    if (s < step) {
+      setDir(-1);
+      setStep(s);
+    }
+  };
+
+  const closeEmailModal = () => {
+    if (verifying) return;
+    setEmailModalOpen(false);
+    setEmailError(null);
+    setPendingSignature(undefined);
+    setPendingMessage(undefined);
   };
 
   const handleVerifyOwnership = async () => {
@@ -101,7 +115,6 @@ export default function OnboardingPage() {
     setEnsVerifying(true);
     try {
       const { address } = await resolveEns(baseUrl, ensName);
-      // 🐛 DEBUG: store raw resolved address for display
       setEnsResolvedAddress(address);
       console.debug('[ENS DEBUG] resolveEns result:', { ensName, address, walletAddress });
       if (address == null || address.toLowerCase() !== walletAddress.toLowerCase()) {
@@ -122,32 +135,64 @@ export default function OnboardingPage() {
   const handleZkVerify = async () => {
     setVerifying(true);
     setVerifyError(null);
-    // Mock ZK verification — simulates ~1.5s proof generation
-    await new Promise(r => setTimeout(r, 1500));
-    setZkVerified(true);
 
-    // Create the user account with ZK proof data
     try {
-      let currentUserId = userId;
-      if (!currentUserId) {
-        const signatureMessage = `AgentFi login for ${walletAddress} at ${new Date().toISOString()}`;
-        const signature = walletAddress ? await signMessage(signatureMessage, walletAddress) : undefined;
-        const userRes = await api.createUser({
-          email: DEFAULT_EMAIL,
-          walletAddress: walletAddress || undefined,
-          zkProofData: walletAddress || 'mock-zk-proof',
-          signature,
-          message: signatureMessage,
-          ensName: verifiedEnsName || undefined,
-        });
-        currentUserId = userRes.userId;
-        setUserId(currentUserId);
+      if (userId) {
+        await new Promise((r) => setTimeout(r, 1500));
+        setZkVerified(true);
+        setVerifying(false);
+        return;
       }
+
+      const signatureMessage = `AgentFi login for ${walletAddress} at ${new Date().toISOString()}`;
+      const signature = walletAddress ? await signMessage(signatureMessage, walletAddress) : undefined;
+
+      setPendingMessage(signatureMessage);
+      setPendingSignature(signature);
+      setEmailInput('');
+      setEmailError(null);
+      setEmailModalOpen(true);
       setVerifying(false);
     } catch (err) {
       setVerifying(false);
-      setVerifyError(err instanceof Error ? err.message : 'Failed to create user');
       setZkVerified(false);
+      setVerifyError(err instanceof Error ? err.message : 'Wallet signature was not completed');
+    }
+  };
+
+  const handleEmailSubmit = async () => {
+    const normalizedEmail = emailInput.trim().toLowerCase();
+    if (!isValidEmail(normalizedEmail)) {
+      setEmailError('Enter a valid email address.');
+      return;
+    }
+
+    setVerifying(true);
+    setVerifyError(null);
+    setEmailError(null);
+
+    try {
+      await new Promise((r) => setTimeout(r, 1500));
+      const userRes = await api.createUser({
+        email: normalizedEmail,
+        walletAddress: walletAddress || undefined,
+        zkProofData: walletAddress || 'mock-zk-proof',
+        signature: pendingSignature,
+        message: pendingMessage,
+        ensName: verifiedEnsName || undefined,
+      });
+
+      setUserId(userRes.userId);
+      setZkVerified(true);
+      setEmailInput(normalizedEmail);
+      setEmailModalOpen(false);
+      setPendingSignature(undefined);
+      setPendingMessage(undefined);
+      setVerifying(false);
+    } catch (err) {
+      setVerifying(false);
+      setZkVerified(false);
+      setEmailError(err instanceof Error ? err.message : 'Failed to create user');
     }
   };
 
@@ -157,7 +202,93 @@ export default function OnboardingPage() {
     <div style={{ position: 'relative', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <AmbientBackground />
 
-      {/* Right-side step navigator */}
+      {emailModalOpen && (
+        <>
+          <div className="panel-dim" onClick={closeEmailModal} />
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 320,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 20,
+            }}
+          >
+            <div
+              className="glass-elevated"
+              style={{
+                width: '100%',
+                maxWidth: 460,
+                padding: '28px 28px 24px',
+                borderRadius: 20,
+                border: '1px solid var(--border)',
+                boxShadow: '0 24px 80px rgba(0, 0, 0, 0.38)',
+                position: 'relative',
+                zIndex: 321,
+              }}
+            >
+              <div style={{ fontFamily: 'Inter', fontSize: 11, color: 'var(--accent)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                Final step
+              </div>
+              <h3 style={{ fontFamily: 'Cormorant Garamond', fontSize: 38, fontWeight: 400, marginTop: 10, color: 'var(--text-primary)' }}>
+                Add your email.
+              </h3>
+              <p style={{ fontFamily: 'Inter', fontSize: 14, color: 'var(--text-secondary)', marginTop: 10, lineHeight: 1.7 }}>
+                Your wallet signature is confirmed. Enter the email we should attach to this verified identity.
+              </p>
+
+              <div style={{ marginTop: 22 }}>
+                <input
+                  className="input-field"
+                  value={emailInput}
+                  onChange={(e) => {
+                    setEmailInput(e.target.value);
+                    if (emailError) setEmailError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !verifying) {
+                      void handleEmailSubmit();
+                    }
+                  }}
+                  placeholder="you@example.com"
+                  autoFocus
+                  style={{ width: '100%' }}
+                />
+              </div>
+
+              {emailError && (
+                <p style={{ fontFamily: 'Inter', fontSize: 13, color: 'var(--danger)', marginTop: 14 }}>
+                  {emailError}
+                </p>
+              )}
+
+              <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
+                <button
+                  className="btn btn-ghost"
+                  style={{ flex: 1, height: 48 }}
+                  onClick={closeEmailModal}
+                  disabled={verifying}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary glow-accent"
+                  style={{ flex: 1, height: 48 }}
+                  onClick={() => {
+                    void handleEmailSubmit();
+                  }}
+                  disabled={verifying}
+                >
+                  {verifying ? 'Saving...' : 'Continue'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       <div className="step-nav">
         {STEP_LABELS.map((label, i) => (
           <div key={i} className="step-nav-item" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -180,30 +311,38 @@ export default function OnboardingPage() {
         ))}
       </div>
 
-      {/* Main card */}
-      <div className="glass-elevated" style={{
-        width: '100%',
-        maxWidth: 600,
-        position: 'relative',
-        zIndex: 10,
-        overflow: 'hidden',
-        minHeight: 480,
-        margin: '0 20px',
-      }}>
-        {/* Progress bar */}
+      <div
+        className="glass-elevated"
+        style={{
+          width: '100%',
+          maxWidth: 600,
+          position: 'relative',
+          zIndex: 10,
+          overflow: 'hidden',
+          minHeight: 480,
+          margin: '0 20px',
+        }}
+      >
         <div className="progress-bar" style={{ position: 'absolute', top: 0, left: 0, right: 0, borderRadius: 0 }}>
           <div className="progress-fill" style={{ width: `${progress}%` }} />
         </div>
 
-        {/* Back button */}
         {step > 0 && (
           <button
             onClick={back}
             style={{
-              position: 'absolute', top: 20, left: 20,
-              background: 'none', border: 'none', cursor: 'pointer',
-              color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 4,
-              fontFamily: 'Inter', fontSize: 13,
+              position: 'absolute',
+              top: 20,
+              left: 20,
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'var(--text-secondary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              fontFamily: 'Inter',
+              fontSize: 13,
             }}
           >
             <ArrowLeft size={14} /> Back
@@ -221,7 +360,6 @@ export default function OnboardingPage() {
               exit="exit"
               transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
             >
-              {/* ── Step 0: Connect Wallet ── */}
               {step === 0 && (
                 <div>
                   <p className="label-ui">STEP 1 OF 3</p>
@@ -270,7 +408,6 @@ export default function OnboardingPage() {
                 </div>
               )}
 
-              {/* ── Step 1: ENS Name + Ownership Verification ── */}
               {step === 1 && (
                 <div>
                   <p className="label-ui">STEP 2 OF 3</p>
@@ -278,7 +415,7 @@ export default function OnboardingPage() {
                     Verify your ENS.
                   </h2>
                   <p style={{ fontFamily: 'Inter', fontSize: 14, color: 'var(--text-secondary)', marginTop: 8, lineHeight: 1.6 }}>
-                    Enter the ENS name you own. We'll verify it resolves to your connected wallet.
+                    Enter the ENS name you own. We&apos;ll verify it resolves to your connected wallet.
                     Your agents will be created as subdomains of this name.
                   </p>
                   <div style={{ marginTop: 28, position: 'relative' }}>
@@ -286,7 +423,7 @@ export default function OnboardingPage() {
                       <input
                         className="input-field"
                         value={ensName}
-                        onChange={e => {
+                        onChange={(e) => {
                           setEnsName(e.target.value.toLowerCase().replace(/[^a-z0-9.-]/g, ''));
                           setEnsOwnershipChecked(false);
                           setEnsOwnershipError(null);
@@ -299,14 +436,14 @@ export default function OnboardingPage() {
                     </div>
                     <div style={{ marginTop: 16, fontFamily: 'Inter', fontSize: 13 }}>
                       {!ensName && <span style={{ color: 'var(--text-tertiary)' }}>Enter your ENS name (e.g. alice.eth)</span>}
-                      {ensName && ensValid === null && <span style={{ color: 'var(--text-secondary)' }}>⏳ Validating...</span>}
+                      {ensName && ensValid === null && <span style={{ color: 'var(--text-secondary)' }}>Validating...</span>}
                       {ensValid === true && !ensOwnershipChecked && (
-                        <span style={{ color: 'var(--text-secondary)' }}>🟢 Valid format — click below to verify ownership</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>Valid format, click below to verify ownership</span>
                       )}
                       {ensValid === true && ensOwnershipChecked && (
-                        <span style={{ color: 'var(--success)' }}>✅ {ensName} verified — belongs to {formatAddress(walletAddress || '')}</span>
+                        <span style={{ color: 'var(--success)' }}>{ensName} verified and belongs to {formatAddress(walletAddress || '')}</span>
                       )}
-                      {ensName && ensValid === false && <span style={{ color: 'var(--danger)' }}>🔴 Invalid ENS format — must end in .eth</span>}
+                      {ensName && ensValid === false && <span style={{ color: 'var(--danger)' }}>Invalid ENS format, it must end in .eth</span>}
                     </div>
                     {walletAddress && (
                       <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, fontFamily: 'JetBrains Mono', fontSize: 12, color: 'var(--text-tertiary)' }}>
@@ -314,26 +451,27 @@ export default function OnboardingPage() {
                       </div>
                     )}
 
-                    {/* 🐛 DEBUG PANEL — remove before prod */}
                     {ensResolvedAddress !== null && (
-                      <div style={{
-                        marginTop: 10,
-                        padding: '10px 14px',
-                        background: 'rgba(251,191,36,0.07)',
-                        border: '1px solid rgba(251,191,36,0.25)',
-                        borderRadius: 8,
-                        fontFamily: 'JetBrains Mono',
-                        fontSize: 11,
-                        lineHeight: 1.7,
-                      }}>
-                        <div style={{ color: 'rgba(251,191,36,0.7)', letterSpacing: '0.08em', marginBottom: 4 }}>🐛 ENS DEBUG</div>
-                        <div><span style={{ color: 'var(--text-tertiary)' }}>name&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ </span><span style={{ color: '#fbbf24' }}>{ensName}</span></div>
-                        <div><span style={{ color: 'var(--text-tertiary)' }}>resolved → </span><span style={{ color: ensResolvedAddress ? '#4ade80' : '#f87171' }}>{ensResolvedAddress ?? 'null (not found)'}</span></div>
-                        <div><span style={{ color: 'var(--text-tertiary)' }}>wallet&nbsp;&nbsp; → </span><span style={{ color: 'var(--text-secondary)' }}>{walletAddress}</span></div>
+                      <div
+                        style={{
+                          marginTop: 10,
+                          padding: '10px 14px',
+                          background: 'rgba(251,191,36,0.07)',
+                          border: '1px solid rgba(251,191,36,0.25)',
+                          borderRadius: 8,
+                          fontFamily: 'JetBrains Mono',
+                          fontSize: 11,
+                          lineHeight: 1.7,
+                        }}
+                      >
+                        <div style={{ color: 'rgba(251,191,36,0.7)', letterSpacing: '0.08em', marginBottom: 4 }}>ENS DEBUG</div>
+                        <div><span style={{ color: 'var(--text-tertiary)' }}>name     -&gt; </span><span style={{ color: '#fbbf24' }}>{ensName}</span></div>
+                        <div><span style={{ color: 'var(--text-tertiary)' }}>resolved -&gt; </span><span style={{ color: ensResolvedAddress ? '#4ade80' : '#f87171' }}>{ensResolvedAddress ?? 'null (not found)'}</span></div>
+                        <div><span style={{ color: 'var(--text-tertiary)' }}>wallet   -&gt; </span><span style={{ color: 'var(--text-secondary)' }}>{walletAddress}</span></div>
                         <div style={{ marginTop: 4 }}>
-                          <span style={{ color: 'var(--text-tertiary)' }}>match&nbsp;&nbsp;&nbsp; → </span>
+                          <span style={{ color: 'var(--text-tertiary)' }}>match    -&gt; </span>
                           <span style={{ color: ensResolvedAddress?.toLowerCase() === walletAddress?.toLowerCase() ? '#4ade80' : '#f87171', fontWeight: 600 }}>
-                            {ensResolvedAddress?.toLowerCase() === walletAddress?.toLowerCase() ? '✅ YES' : '❌ NO'}
+                            {ensResolvedAddress?.toLowerCase() === walletAddress?.toLowerCase() ? 'YES' : 'NO'}
                           </span>
                         </div>
                       </div>
@@ -353,7 +491,7 @@ export default function OnboardingPage() {
                       disabled={!ensValid || ensVerifying}
                       id="verify-ownership-btn"
                     >
-                      {ensVerifying ? 'Verifying...' : 'Verify ENS Ownership →'}
+                      {ensVerifying ? 'Verifying...' : 'Verify ENS Ownership ->'}
                     </button>
                   ) : (
                     <div style={{ marginTop: 16, fontFamily: 'Inter', fontSize: 13, color: 'var(--success)', textAlign: 'center' }}>
@@ -363,16 +501,15 @@ export default function OnboardingPage() {
                 </div>
               )}
 
-              {/* ── Step 2: ZK Human Verification ── */}
               {step === 2 && (
                 <div>
                   <p className="label-ui">STEP 3 OF 3</p>
                   <h2 style={{ fontFamily: 'Cormorant Garamond', fontSize: 'clamp(40px, 6vw, 52px)', fontWeight: 300, marginTop: 12, color: 'var(--text-primary)' }}>
-                    Prove you're human.
+                    Prove you&apos;re human.
                   </h2>
                   <p style={{ fontFamily: 'Inter', fontSize: 16, color: 'var(--text-secondary)', marginTop: 16, lineHeight: 1.7 }}>
                     One-time ZK identity verification via Reclaim Protocol.<br />
-                    This maps your ENS to a unique human — preventing sybil attacks.
+                    This maps your ENS to a unique human, preventing sybil attacks.
                   </p>
 
                   <div className="glass" style={{ marginTop: 28, padding: '20px 24px', borderRadius: 12 }}>
@@ -411,7 +548,7 @@ export default function OnboardingPage() {
                       onClick={() => navigate('/create-agent')}
                       id="continue-to-agents-btn"
                     >
-                      <Shield size={16} /> Identity verified — Create your first agent →
+                      <Shield size={16} /> Identity verified, create your first agent &rarr;
                     </button>
                   )}
                   <p style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center', marginTop: 16 }}>

@@ -121,6 +121,7 @@ async function waitForTx(txPromise: Promise<any>, label: string) {
     txHash: tx.hash,
     blockNumber: receipt.blockNumber,
     gasUsed: receipt.gasUsed.toString(),
+    receipt,
   };
 }
 
@@ -321,6 +322,7 @@ export async function requestLoan({
   const interestBig  = toUsdc(interestUsdc);
   const borrowerEnsHash = ethers.keccak256(ethers.toUtf8Bytes(borrowerEns));
   const lenderEnsHash   = ethers.keccak256(ethers.toUtf8Bytes(lenderEns));
+  const requestLoanFn: any = contract.requestLoan;
 
   const collateralNeeded = await getRequiredCollateral(borrowerWallet, principalUsdc);
   if (collateralNeeded > 0) {
@@ -347,10 +349,24 @@ export async function requestLoan({
 
   logger.info(`[blockchain] requestLoan borrower=${borrowerWallet} lender=${lenderWallet}`);
 
+  let expectedLoanId: number | null = null;
+  if (typeof requestLoanFn?.staticCall === "function") {
+    expectedLoanId = Number(
+      await requestLoanFn.staticCall(
+        borrowerWallet,
+        lenderWallet,
+        principalBig,
+        interestBig,
+        borrowerEnsHash,
+        lenderEnsHash
+      )
+    );
+  }
+
   const result = await enqueue("platform", () =>
     waitForTxWithRetry(
       () =>
-        contract.requestLoan(
+        requestLoanFn(
           borrowerWallet,
           lenderWallet,
           principalBig,
@@ -362,13 +378,45 @@ export async function requestLoan({
     )
   );
 
-  const receipt = await provider.getTransactionReceipt(result.txHash);
-  if(!receipt) throw new Error("Tx Receipt not found");
-  
-  const loanRequestedTopic = contract.interface.getEvent("LoanRequested")!.topicHash;
-  const log = receipt.logs.find(l => l.topics[0] === loanRequestedTopic);
-  const parsed = contract.interface.parseLog(log as any);
-  const loanId = Number(parsed?.args.loanId || 0);
+  const receipt = result.receipt || await provider.getTransactionReceipt(result.txHash);
+  if (!receipt) throw new Error("Tx Receipt not found");
+
+  const candidateLoanIds = new Set<number>();
+  if (expectedLoanId && expectedLoanId > 0) {
+    candidateLoanIds.add(expectedLoanId);
+  }
+
+  const contractAddress = String(contract.target || "").toLowerCase();
+  for (const log of receipt.logs) {
+    if (contractAddress && String(log.address || "").toLowerCase() !== contractAddress) {
+      continue;
+    }
+
+    try {
+      const parsed = contract.interface.parseLog(log as any);
+      if (parsed?.name === "LoanRequested") {
+        const parsedLoanId = Number(parsed.args?.[0] ?? parsed.args?.loanId ?? 0);
+        if (parsedLoanId > 0) {
+          candidateLoanIds.add(parsedLoanId);
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  let loanId = 0;
+  for (const candidate of candidateLoanIds) {
+    const loan = await contract.getLoan(candidate);
+    if (Number(loan.loanId) === candidate && Number(loan.status) !== 0) {
+      loanId = candidate;
+      break;
+    }
+  }
+
+  if (loanId <= 0) {
+    throw new Error(`[blockchain] requestLoan could not resolve created loanId from tx ${result.txHash}`);
+  }
 
   return { ...result, loanId, collateralLocked: collateralNeeded };
 }

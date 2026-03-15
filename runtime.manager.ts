@@ -450,9 +450,20 @@ class AgentRuntimeManager {
         await this.runBorrowerCycle(agent, ctx);
       }
     } catch (error: any) {
-      await persistLog(agentId, cycleId, "cycle:error", error.message || "Unknown runtime error", {
+      const errorMessage = error?.message || "Unknown runtime error";
+      await persistLog(agentId, cycleId, "cycle:error", errorMessage, {
         level: "error",
       });
+
+      const failedAgent = await loadAgent(agentId);
+      if (failedAgent) {
+        await updateAgentRuntime(agentId, {
+          last_execution_at: new Date(),
+          last_result_summary: `Cycle failed: ${errorMessage}`,
+          total_cycles: Number(failedAgent.total_cycles || 0) + 1,
+          updated_at: new Date(),
+        });
+      }
     } finally {
       this.running.delete(agentId);
       const agent = await loadAgent(agentId);

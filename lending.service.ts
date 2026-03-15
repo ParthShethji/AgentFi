@@ -25,6 +25,35 @@ const TX_GATE_USDC = 500;         // auto-sign threshold
 const DECAY_ONSET_DAYS = 60;
 const DECAY_RATE = 0.5;           // rep points per 30 days inactive
 
+function roundUsdc(value: number) {
+  return Math.round(value * 1e6) / 1e6;
+}
+
+async function loadWalletPrivateKey(walletAddress: string) {
+  const { getAgentPrivateKey, loadAgentPrivateKey } = require("./config/agentKeys");
+  return getAgentPrivateKey(walletAddress) || await loadAgentPrivateKey(walletAddress);
+}
+
+async function ensureUsdcAllowance(
+  walletAddress: string,
+  requiredAmountUsdc: number,
+  ownerLabel: string
+) {
+  if (requiredAmountUsdc <= 0) return;
+
+  const allowance = await blockchain.checkAllowance(walletAddress);
+  if (allowance >= requiredAmountUsdc) return;
+
+  const privateKey = await loadWalletPrivateKey(walletAddress);
+  if (!privateKey) {
+    throw new Error(
+      `${ownerLabel} must approve ${roundUsdc(requiredAmountUsdc)} USDC before proceeding. No private key available for auto-approve.`
+    );
+  }
+
+  await blockchain.approveUsdc(privateKey, roundUsdc(requiredAmountUsdc));
+}
+
 // ─── Interest calculation ─────────────────────────────────────────────────────
 
 export function calculateInterest(principalUsdc: number, borrowerRep: number) {
@@ -147,10 +176,7 @@ export async function postLendOffer({ lenderAgentId, maxAmountUsdc, minRepRequir
 
   const allowance = await blockchain.checkAllowance(lender.wallet_address);
   if (allowance < maxAmountUsdc) {
-    const { getAgentPrivateKey, loadAgentPrivateKey } = require("./config/agentKeys");
-    const privateKey =
-      getAgentPrivateKey(lender.wallet_address) ||
-      await loadAgentPrivateKey(lender.wallet_address);
+    const privateKey = await loadWalletPrivateKey(lender.wallet_address);
     if (privateKey) {
       await blockchain.approveUsdc(privateKey, maxAmountUsdc * 10);
     } else {
@@ -277,6 +303,18 @@ async function _executeMatch({ borrower, repData, requestedAmountUsdc }: any) {
   await blockchain.ensureAgentRegistered(offer.lender_wallet, offer.lender_ens, 35);
 
   const { interestUsdc, ratePct } = calculateInterest(requestedAmountUsdc, repData.score);
+  const collateralNeededUsdc = await blockchain.getRequiredCollateral(
+    borrower.wallet_address,
+    requestedAmountUsdc
+  );
+
+  if (collateralNeededUsdc > 0) {
+    await ensureUsdcAllowance(
+      borrower.wallet_address,
+      collateralNeededUsdc,
+      "Borrower"
+    );
+  }
 
   const requestResult = await blockchain.requestLoan({
     borrowerWallet: borrower.wallet_address,
@@ -332,6 +370,9 @@ export async function repayLoan({ matchId, borrowerAgentId, profitGeneratedUsdc 
   );
   if (!rows.length) throw new Error(`Active match not found for matchId=${matchId}`);
   const match = rows[0];
+  const totalOwedUsdc = roundUsdc(Number(match.amount_usdc) + Number(match.interest_usdc));
+
+  await ensureUsdcAllowance(match.borrower_wallet, totalOwedUsdc, "Borrower");
 
   const result = await blockchain.repayLoan(match.loan_id_onchain, match.borrower_wallet, profitGeneratedUsdc || 0);
   const updatedRep = await blockchain.getAgentRep(match.borrower_wallet);
@@ -348,7 +389,14 @@ export async function repayLoan({ matchId, borrowerAgentId, profitGeneratedUsdc 
   await resetVolumeGate(borrowerAgentId);
 
   const repDelta = updatedRep.score - match.borrower_rep_at_origination;
-  await logEvent({ agentId: borrowerAgentId, type: "loan_repaid", amount: match.amount_usdc + match.interest_usdc, counterpartyAgentId: match.lender_agent_id, txHash: result.txHash, repDelta });
+  await logEvent({
+    agentId: borrowerAgentId,
+    type: "loan_repaid",
+    amount: totalOwedUsdc,
+    counterpartyAgentId: match.lender_agent_id,
+    txHash: result.txHash,
+    repDelta,
+  });
 
   return { status: "repaid", txHash: result.txHash, newReputationScore: updatedRep.score, repDelta };
 }
