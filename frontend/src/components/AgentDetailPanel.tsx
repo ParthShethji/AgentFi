@@ -128,7 +128,12 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
     id: `runtime-${log.log_id}`,
     agentId: agent.id,
     time: log.created_at,
-    type: log.tool_name === 'post_lend_offer' ? 'Lend' : log.tool_name === 'request_borrow' ? 'Borrow' : 'Swap',
+    type: log.tool_name === 'post_lend_offer' ? 'Lend' 
+        : log.tool_name === 'request_borrow' ? 'Borrow' 
+        : log.tool_name === 'repay_loan' ? 'Repay'
+        : log.tool_name === 'execute_swap' ? 'Swap'
+        : log.tool_name === 'create_limit_order' ? 'Order'
+        : 'Action',
     counterparty: log.tool_name || log.phase,
     amount: Number((log.metadata as any)?.principalUsdc || (log.metadata as any)?.maxAmountUsdc || 0),
     status: log.level === 'error' ? 'Defaulted' : 'Completed',
@@ -380,12 +385,12 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
 
           {/* ── Stats Strip ── */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
-            {(backendAgentId && agentRep
+            {(backendAgentId
               ? [
-                  { label: 'Loans Taken', val: agentRep.totalLoans },
-                  { label: 'Repaid On-Time', val: agentRep.cleanRepayments },
-                  { label: 'Defaults', val: agentRep.defaults },
-                  { label: 'Max Loan', val: agentRep.maxLoanUsdc != null ? `$${agentRep.maxLoanUsdc}` : '—' },
+                  { label: 'Loans Taken', val: agentRep ? agentRep.totalLoans : '—' },
+                  { label: 'Repaid On-Time', val: agentRep ? agentRep.cleanRepayments : '—' },
+                  { label: 'Defaults', val: agentRep ? agentRep.defaults : '—' },
+                  { label: 'Max Loan', val: agentRep && agentRep.maxLoanUsdc != null ? `$${agentRep.maxLoanUsdc}` : '—' },
                 ]
               : [
                   { label: 'Loans Taken', val: agent.id === 'vault-alpha' ? 12 : agent.id === 'trader-beta' ? 8 : 5 },

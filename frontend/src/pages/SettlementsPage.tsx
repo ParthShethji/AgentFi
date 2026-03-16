@@ -506,12 +506,21 @@ export default function SettlementsPage() {
                         </span>
                       )}
                       {tx.tx_hash && (
-                        <span style={{
-                          fontFamily: 'JetBrains Mono, monospace', fontSize: 10, color: 'var(--text-tertiary)',
-                          overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 200,
-                        }}>
-                          tx: {tx.tx_hash.slice(0, 10)}…{tx.tx_hash.slice(-6)}
-                        </span>
+                        <a 
+                          href={`${import.meta.env.CHAIN_EXPLORER_URL || 'https://base-sepolia.blockscout.com/'}tx/${tx.tx_hash}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            fontFamily: 'JetBrains Mono, monospace', fontSize: 10, color: 'var(--text-tertiary)',
+                            overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 200, textDecoration: 'none',
+                            display: 'flex', alignItems: 'center', gap: 4
+                          }}
+                        >
+                          <span style={{ color: 'inherit' }} onMouseEnter={(e) => e.currentTarget.style.color = 'var(--accent)'} onMouseLeave={(e) => e.currentTarget.style.color = 'inherit'}>
+                            tx: {tx.tx_hash.slice(0, 10)}…{tx.tx_hash.slice(-6)}
+                          </span>
+                          <ArrowUpRight size={10} />
+                        </a>
                       )}
                       {tx.match_status && (
                         <span style={{

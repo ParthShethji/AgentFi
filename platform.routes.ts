@@ -292,7 +292,11 @@ router.post("/agents", async (req, res) => {
       ...defaultStrategy(agentRole),
       ...(strategy || {}),
     };
-    const executionSeconds = Math.max(10, Number(executionIntervalSeconds || 60));
+
+    const intervalInput = Number(executionIntervalSeconds);
+    const executionSeconds = intervalInput === 0 ? 0 : Math.max(10, intervalInput || 60);
+    const initialRunStatus = executionSeconds === 0 ? "paused" : "active";
+
     const selectedTools = Array.isArray(enabledTools) && enabledTools.length
       ? enabledTools.map((tool) => String(tool))
       : null;
@@ -325,7 +329,7 @@ router.post("/agents", async (req, res) => {
       `INSERT INTO agent_configs (
          agent_id, agent_type, strategy_prompt, strategy_json, execution_interval_seconds,
          enabled_tools, risk_tolerance, profit_target_pct, runtime_status, next_execution_at, current_positions_json, created_at, updated_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', NOW(), '{}', NOW(), NOW())`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), '{}', NOW(), NOW())`,
       [
         agentId,
         agentRole,
@@ -335,6 +339,7 @@ router.post("/agents", async (req, res) => {
         JSON.stringify(enabledToolNames),
         normalizedRisk,
         Number(profitTargetPct || 4),
+        initialRunStatus,
       ]
     );
 
@@ -473,9 +478,10 @@ router.post("/agents/:agentId/fund", async (req, res) => {
   }
 });
 
-router.get("/admin/overview", async (_req, res) => {
+router.get("/admin/overview", async (req, res) => {
+  const userId = req.query.userId ? String(req.query.userId) : undefined;
   try {
-    const overview = await agentRuntimeManager.getAdminOverview();
+    const overview = await agentRuntimeManager.getAdminOverview(userId);
     return res.json(overview);
   } catch (error: any) {
     return res.status(400).json({ error: error.message || "failed to load admin overview" });

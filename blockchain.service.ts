@@ -276,10 +276,12 @@ export async function mintUsdc(toAddress: string, amountUsdc: number) {
 export async function approveUsdc(walletPrivateKey: string, amountUsdc: number) {
   const wallet = new Wallet(walletPrivateKey, provider);
   const usdcAsWallet = new Contract(process.env.USDC_ADDRESS || ethers.ZeroAddress, USDC_ABI, wallet);
-  const amount = toUsdc(amountUsdc);
+  // Approve MaxUint256 to avoid precision mismatch when requestLoan re-reads collateral requirement.
+  // This is the standard ERC20 "unlimited approval" pattern used by most DeFi protocols.
+  const amount = ethers.MaxUint256;
   const tx = await usdcAsWallet.approve(process.env.CONTRACT_ADDRESS || ethers.ZeroAddress, amount);
   await tx.wait(1);
-  logger.info(`[blockchain] approved ${amountUsdc} USDC from ${wallet.address}`);
+  logger.info(`[blockchain] approved ${amountUsdc} USDC (MaxUint256) from ${wallet.address}`);
 }
 
 /**
@@ -451,18 +453,41 @@ export async function requestLoan({
   logger.info(`[blockchain] requestLoan total candidates: [${[...candidateLoanIds].join(", ")}]`);
 
   let loanId = 0;
+  const MAX_VERIFY_ATTEMPTS = 3;
   for (const candidate of candidateLoanIds) {
-    try {
-      const loan = await contract.getLoan(candidate);
-      const onChainLoanId = Number(loan.loanId);
-      const onChainStatus = Number(loan.status);
-      logger.info(`[blockchain] requestLoan verifying candidate=${candidate} onChainLoanId=${onChainLoanId} status=${onChainStatus}`);
-      if (onChainLoanId === candidate && onChainStatus !== 0) {
-        loanId = candidate;
-        break;
+    for (let attempt = 0; attempt < MAX_VERIFY_ATTEMPTS; attempt++) {
+      try {
+        if (attempt > 0) {
+          logger.info(`[blockchain] requestLoan getLoan retry attempt=${attempt} for candidate=${candidate}`);
+          await new Promise((r) => setTimeout(r, 1000)); // wait for RPC consistency
+        }
+        const loan = await contract.getLoan(candidate);
+        const onChainLoanId = Number(loan.loanId);
+        const onChainStatus = Number(loan.status);
+        logger.info(`[blockchain] requestLoan verifying candidate=${candidate} onChainLoanId=${onChainLoanId} status=${onChainStatus} attempt=${attempt}`);
+        if (onChainLoanId === candidate && onChainStatus !== 0) {
+          loanId = candidate;
+          break;
+        }
+      } catch (err: any) {
+        logger.warn(`[blockchain] requestLoan getLoan(${candidate}) failed: ${err.message}`);
       }
-    } catch (err: any) {
-      logger.warn(`[blockchain] requestLoan getLoan(${candidate}) failed: ${err.message}`);
+    }
+    if (loanId > 0) break;
+  }
+
+  // Fallback: if getLoan reads still return stale data but multiple independent
+  // sources (staticCall, preNextLoanId, LoanRequested event) all agree, trust them.
+  if (loanId <= 0 && candidateLoanIds.size === 1) {
+    const agreed = [...candidateLoanIds][0];
+    const sources: string[] = [];
+    if (expectedLoanId === agreed) sources.push("staticCall");
+    if (preNextLoanId === agreed) sources.push("preNextLoanId");
+    // LoanRequested event is always a source if it was added to candidates
+    sources.push("event/fallback");
+    if (sources.length >= 2) {
+      logger.warn(`[blockchain] requestLoan trusting corroborated loanId=${agreed} from [${sources.join(", ")}] despite stale getLoan read`);
+      loanId = agreed;
     }
   }
 

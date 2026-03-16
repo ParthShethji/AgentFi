@@ -10,6 +10,7 @@ import OnboardingPage from './pages/OnboardingPage';
 import CreateAgentPage from './pages/CreateAgentPage';
 import DashboardPage from './pages/DashboardPage';
 import SettlementsPage from './pages/SettlementsPage';
+import AdminFeedPage from './pages/AdminFeedPage';
 import NavBar from './components/NavBar';
 import { useEffect } from 'react';
 
@@ -72,6 +73,15 @@ function AppRoutes() {
           <AnimatedRoute>
             <NavBar activeNav="activity" />
             <SettlementsPage />
+          </AnimatedRoute>
+        }
+      />
+      <Route
+        path="/admin/feed"
+        element={
+          <AnimatedRoute>
+            <NavBar activeNav="admin" />
+            <AdminFeedPage />
           </AnimatedRoute>
         }
       />

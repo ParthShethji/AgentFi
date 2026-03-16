@@ -8,7 +8,7 @@ import { useApp } from '../context/AppContext';
 import { useApi } from '../context/ApiContext';
 import { formatAddress } from '../wallet/metamask';
 import { ensNodes } from '../api';
-import { createEnsSubdomain } from '../wallet/metamask';
+import { createEnsSubdomain, sendEthToAgent, sendUsdcToAgent, switchToBaseSepolia } from '../wallet/metamask';
 
 const STEP_LABELS = ['Name Agent', 'Choose Role', 'Rules', 'Launch'];
 
@@ -113,18 +113,51 @@ export default function CreateAgentPage() {
     setCreating(true);
     try {
       const backendRole = role === 'Borrower' ? 'borrower' : 'lender';
-      const strategyObj = {
-        maxLoanAmount: 500,
-        minReputation: 25,
-        interestRate: 2.0,
-        tradeAllocation: { ETH: 60, stablecoin: 40 },
-        repayAfterSeconds: 30,
-        signals: [] as string[],
+      
+      let parsedMaxLoanAmount = 500;
+      let parsedMinReputation = 25;
+      let parsedInterestRate = 2.0;
+      let parsedStopLossPct = 5.0;
+      let parsedTakeProfitPct = 12.0;
+      let parsedConcurrentLoans = 3;
+
+      if (role === 'Lender') {
+        const repMatch = strategy.match(/reputation above (\d+)/i);
+        if (repMatch) parsedMinReputation = parseInt(repMatch[1], 10);
+        const maxLoanMatch = strategy.match(/single loan:? (\d+)/i);
+        if (maxLoanMatch) parsedMaxLoanAmount = parseInt(maxLoanMatch[1], 10);
+        const maxConcurrentMatch = strategy.match(/concurrent loans:? (\d+)/i);
+        if (maxConcurrentMatch) parsedConcurrentLoans = parseInt(maxConcurrentMatch[1], 10);
+        const interestRateMatch = strategy.match(/interest rate:? (\d+)/i);
+        if (interestRateMatch) parsedInterestRate = parseFloat(interestRateMatch[1]);
+      } else {
+        const borrowMatch = strategy.match(/Borrow maximum (\d+)/i);
+        if (borrowMatch) parsedMaxLoanAmount = parseInt(borrowMatch[1], 10);
+        const stopLossMatch = strategy.match(/Stop-loss at (\d+)/i);
+        if (stopLossMatch) parsedStopLossPct = parseFloat(stopLossMatch[1]);
+        const takeProfitMatch = strategy.match(/Take-profit at (\d+)/i);
+        if (takeProfitMatch) parsedTakeProfitPct = parseFloat(takeProfitMatch[1]);
+      }
+
+      let strategyObj: any = {
+        maxLoanAmount: parsedMaxLoanAmount,
         raw: strategy,
       };
 
+      if (role === 'Lender') {
+        strategyObj.minReputation = parsedMinReputation;
+        strategyObj.interestRate = parsedInterestRate;
+        strategyObj.maxConcurrentLoans = parsedConcurrentLoans;
+      } else {
+        strategyObj.stopLossPct = parsedStopLossPct;
+        strategyObj.takeProfitPct = parsedTakeProfitPct;
+        strategyObj.tradeAllocation = { ETH: 60, stablecoin: 40 };
+        strategyObj.repayAfterSeconds = 30;
+        strategyObj.signals = [] as string[];
+      }
+
       // Step 1: Create agent on backend (generates wallet, registers on Base Sepolia)
-      setCreatingStep('[1/2] Creating agent on Base Sepolia...');
+      setCreatingStep('[1/3] Creating agent on Base Sepolia...');
       const agentRes = await api.createAgent({
         userId: userId!,
         role: backendRole,
@@ -142,11 +175,9 @@ export default function CreateAgentPage() {
               : ['fetch_open_offers', 'get_borrow_quote', 'request_borrow', 'repay_loan', 'get_agent_reputation'].includes(name);
           })
           .map((tool) => String(tool.name)),
-      });
-
-      // Step 2: Create ENS subdomain on Ethereum Sepolia via MetaMask
+      });      // Step 2: Create ENS subdomain on Ethereum Sepolia via MetaMask
       // Fetch node hashes from backend (avoids needing ethers in frontend)
-      setCreatingStep('[2/2] Creating ENS subdomain on Ethereum Sepolia...\nMetaMask will ask to switch networks, then prompt 2 txs.');
+      setCreatingStep('[2/3] Creating ENS subdomain on Ethereum Sepolia...\nMetaMask will ask to switch networks, then prompt 2 txs.');
       try {
         const nodes = await ensNodes(baseUrl, verifiedEnsName!, subdomain);
         await createEnsSubdomain({
@@ -159,9 +190,42 @@ export default function CreateAgentPage() {
           labelHash: nodes.labelHash,
         });
       } catch (ensErr: any) {
-        // ENS failure is non-fatal for the demo — agent is created, subdomain can be retried
-        console.warn('[ENS] Subdomain creation failed (non-fatal):', ensErr.message);
-        setLaunchError(`Agent created ✅ but ENS subdomain failed: ${ensErr.message}. You can retry later.`);
+        // Stop here so user can see it
+        console.warn('[ENS] Subdomain creation failed or rejected:', ensErr.message);
+        setLaunchError(`ENS subdomain creation failed: ${ensErr.message}.`);
+        return;
+      }
+
+      // Step 3: Funding agent wallet automatically on Base Sepolia
+      setCreatingStep(`[3/3] Funding agent wallet on Base Sepolia...\nPrompting for 0.0001 ETH & ${parsedMaxLoanAmount} USDC.`);
+      try {
+        await switchToBaseSepolia();
+        
+        let usdcAddressStr = '';
+        try {
+          const runtime = await api.getAgentRuntime(agentRes.agentId);
+          usdcAddressStr = runtime.walletFunding?.usdcAddress || '';
+        } catch (e) {
+          console.warn('Could not fetch usdc token address', e);
+        }
+
+        if (usdcAddressStr) {
+          // Fund ETH
+          await sendEthToAgent(agentRes.walletAddress, '0.0001');
+          // Fund USDC
+          await sendUsdcToAgent(usdcAddressStr, agentRes.walletAddress, String(parsedMaxLoanAmount));
+        } else {
+          console.warn('No USDC token address returned, funding ETH only');
+          await sendEthToAgent(agentRes.walletAddress, '0.0001');
+        }
+      } catch (fundErr: any) {
+        console.warn('[Funding] Auto-fund failed or rejected:', fundErr.message);
+        setLaunchError(`Agent created ✅ ENS created ✅ but Auto-funding failed: ${fundErr.message}. You can manually fund it via the Dashboard later.`);
+        // Note: we can still proceed to Dashboard since the agent is created and ENS resolves, 
+        // they just need to manually fund it. We'll wait 3 seconds so they see the error, or just let them click 'Dashboard' if we didn't redirect.
+        // Actually, let's leave them on this screen if it fails, or maybe just navigate?
+        // Let's just return here too, so the user knows what happened.
+        return;
       }
 
       setCreatedAgentId(agentRes.agentId);

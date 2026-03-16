@@ -33,7 +33,7 @@ export type ApiClient = {
   runAgent(agentId: string): Promise<{ agentId: string; triggered: boolean; message?: string }>;
   updateAgentStatus(agentId: string, runtimeStatus: "active" | "paused" | "stopped"): Promise<{ agentId: string; runtimeStatus: string }>;
   fundAgent(agentId: string, payload: FundAgentPayload): Promise<{ agentId: string; funded: boolean }>;
-  getAdminOverview(): Promise<AdminOverviewResponse>;
+  getAdminOverview(userId?: string): Promise<AdminOverviewResponse>;
   getTools(): Promise<{ tools: Array<Record<string, unknown>> }>;
   getOffers(minRep: number, maxAmount: number): Promise<GetOffersResponse>;
   postOffer(payload: PostOfferPayload): Promise<PostOfferResponse>;
@@ -125,8 +125,9 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         payload
       );
     },
-    getAdminOverview() {
-      return callApi<AdminOverviewResponse>(baseUrl, token, "GET", "/platform/admin/overview");
+    getAdminOverview(userId?: string) {
+      const url = userId ? `/platform/admin/overview?userId=${encodeURIComponent(userId)}` : "/platform/admin/overview";
+      return callApi<AdminOverviewResponse>(baseUrl, token, "GET", url);
     },
     getTools() {
       return callApi<{ tools: Array<Record<string, unknown>> }>(baseUrl, token, "GET", "/platform/tools");

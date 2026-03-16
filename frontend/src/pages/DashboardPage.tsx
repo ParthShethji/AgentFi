@@ -65,8 +65,9 @@ export default function DashboardPage() {
     refetchInterval: 4000,
   });
   const { data: adminOverview, isLoading: overviewLoading } = useQuery({
-    queryKey: ['adminOverview'],
-    queryFn: () => api.getAdminOverview(),
+    queryKey: ['adminOverview', userId],
+    queryFn: () => api.getAdminOverview(userId!),
+    enabled: !!userId,
     refetchInterval: 4000,
   });
   const { data: offersData, isLoading: offersLoading } = useQuery({
@@ -81,7 +82,7 @@ export default function DashboardPage() {
   const scheduleRefreshes = (agentId: string) => {
     const invalidate = () => {
       queryClient.invalidateQueries({ queryKey: ['userAgents', userId] });
-      queryClient.invalidateQueries({ queryKey: ['adminOverview'] });
+      queryClient.invalidateQueries({ queryKey: ['adminOverview', userId] });
       queryClient.invalidateQueries({ queryKey: ['agentRuntime', agentId] });
     };
     [3000, 8000, 16000, 25000, 35000].forEach((ms) => setTimeout(invalidate, ms));
@@ -90,7 +91,7 @@ export default function DashboardPage() {
   const triggerMutation = useMutation({
     mutationFn: (agentId: string) => api.runAgent(agentId),
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['adminOverview'] });
+      queryClient.invalidateQueries({ queryKey: ['adminOverview', userId] });
       queryClient.invalidateQueries({ queryKey: ['userAgents', userId] });
       const agentId = data.agentId;
       if (data.triggered) {

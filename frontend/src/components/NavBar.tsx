@@ -4,7 +4,7 @@ import { Moon, Sun } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { connectMetaMask, formatAddress, getCurrentAccount } from '../wallet/metamask';
 
-type NavView = 'dashboard' | 'activity';
+type NavView = 'dashboard' | 'activity' | 'admin';
 
 interface Props {
   activeNav?: NavView;
@@ -96,6 +96,7 @@ export default function NavBar({ activeNav = 'dashboard' }: Props) {
         {([
           { label: 'Dashboard', view: 'dashboard' as NavView, path: '/dashboard' },
           { label: 'Settlements', view: 'activity' as NavView, path: '/settlements' },
+          { label: 'Admin Feed', view: 'admin' as NavView, path: '/admin/feed' },
         ]).map(({ label, view, path }) => (
           <button
             key={view}

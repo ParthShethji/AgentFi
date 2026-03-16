@@ -858,23 +858,40 @@ class AgentRuntimeManager {
     };
   }
 
-  async getAdminOverview() {
-    const { rows: agents } = await db(
-      `SELECT a.agent_id, a.ens_name, a.role, a.status, a.reputation_score, a.last_activity_at,
-              c.execution_interval_seconds, c.runtime_status, c.last_execution_at, c.next_execution_at,
-              c.last_result_summary, c.total_cycles, c.total_profit_usdc, c.total_borrowed_usdc, c.total_lent_usdc
-       FROM agents a
-       JOIN agent_configs c ON c.agent_id = a.agent_id
-       ORDER BY c.total_profit_usdc DESC, a.created_at DESC`
-    );
+  async getAdminOverview(userId?: string) {
+    const agentsQuery = userId
+      ? `SELECT a.agent_id, a.ens_name, a.role, a.status, a.reputation_score, a.last_activity_at,
+                c.execution_interval_seconds, c.runtime_status, c.last_execution_at, c.next_execution_at,
+                c.last_result_summary, c.total_cycles, c.total_profit_usdc, c.total_borrowed_usdc, c.total_lent_usdc
+         FROM agents a
+         JOIN agent_configs c ON c.agent_id = a.agent_id
+         WHERE a.user_id = $1
+         ORDER BY c.total_profit_usdc DESC, a.created_at DESC`
+      : `SELECT a.agent_id, a.ens_name, a.role, a.status, a.reputation_score, a.last_activity_at,
+                c.execution_interval_seconds, c.runtime_status, c.last_execution_at, c.next_execution_at,
+                c.last_result_summary, c.total_cycles, c.total_profit_usdc, c.total_borrowed_usdc, c.total_lent_usdc
+         FROM agents a
+         JOIN agent_configs c ON c.agent_id = a.agent_id
+         ORDER BY c.total_profit_usdc DESC, a.created_at DESC`;
 
-    const { rows: recentLogs } = await db(
-      `SELECT l.log_id, l.agent_id, a.ens_name, a.role, l.phase, l.level, l.message, l.tool_name, l.created_at
-       FROM agent_execution_logs l
-       JOIN agents a ON a.agent_id = l.agent_id
-       ORDER BY l.created_at DESC
-       LIMIT 60`
-    );
+    const agentsParams = userId ? [userId] : [];
+    const { rows: agents } = await db(agentsQuery, agentsParams);
+
+    const logsQuery = userId
+      ? `SELECT l.log_id, l.agent_id, a.ens_name, a.role, l.phase, l.level, l.message, l.tool_name, l.created_at
+         FROM agent_execution_logs l
+         JOIN agents a ON a.agent_id = l.agent_id
+         WHERE a.user_id = $1
+         ORDER BY l.created_at DESC
+         LIMIT 60`
+      : `SELECT l.log_id, l.agent_id, a.ens_name, a.role, l.phase, l.level, l.message, l.tool_name, l.created_at
+         FROM agent_execution_logs l
+         JOIN agents a ON a.agent_id = l.agent_id
+         ORDER BY l.created_at DESC
+         LIMIT 60`;
+
+    const logsParams = userId ? [userId] : [];
+    const { rows: recentLogs } = await db(logsQuery, logsParams);
 
     const { rows: activity } = await db(
       `SELECT type,
@@ -970,10 +987,12 @@ class AgentRuntimeManager {
   private async runLenderCycle(agent: AgentRow, ctx: ToolCallContext) {
     const strategy = parseJson<Record<string, any>>(agent.strategy_json, {});
     const enabledTools = parseJson<string[]>(agent.enabled_tools, []);
-    const ownOpenOffers = await db(
-      `SELECT offer_id FROM lend_offers WHERE lender_agent_id = $1 AND status = 'open' ORDER BY created_at DESC LIMIT 1`,
+    const { rows: openOffersCountRow } = await db(
+      `SELECT count(*) as count FROM lend_offers WHERE lender_agent_id = $1 AND status = 'open'`,
       [agent.agent_id]
     );
+    const openOffersCount = Number(openOffersCountRow[0].count);
+    const maxConcurrent = Number(strategy.maxConcurrentLoans || 1);
 
     await ctx.log(
       "reasoning",
@@ -981,20 +1000,21 @@ class AgentRuntimeManager {
       { metadata: { template: strategyTemplateFor("lender"), strategy } }
     );
 
-    if (ownOpenOffers.rows.length) {
-      await ctx.log("decision", "Skipping new offer because an open offer already exists", {
-        metadata: { existingOfferId: ownOpenOffers.rows[0].offer_id },
+    if (openOffersCount >= maxConcurrent) {
+      await ctx.log("decision", "Skipping new offer because max concurrent open offers limit reached", {
+        metadata: { openOffersCount, maxConcurrent },
       });
       await updateAgentRuntime(agent.agent_id, {
         last_execution_at: new Date(),
-        last_result_summary: "Offer already open; cycle skipped",
+        last_result_summary: "Max concurrent offers reached; cycle skipped",
         total_cycles: agent.total_cycles + 1,
         updated_at: new Date(),
       });
       return;
     }
 
-    const maxAmountUsdc = Number(strategy.maxLoanAmount || 500);
+    const maxAllowedUsdc = Number(strategy.maxLoanAmount || 500);
+    const maxAmountUsdc = Math.floor(randomBetween(Math.min(50, maxAllowedUsdc), maxAllowedUsdc));
     const minRepRequired = riskAdjustedRepThreshold(Number(strategy.minReputation || 25), agent.risk_tolerance);
     const ratePct = Number(strategy.interestRate || 2);
 
@@ -1026,7 +1046,8 @@ class AgentRuntimeManager {
   private async runBorrowerCycle(agent: AgentRow, ctx: ToolCallContext) {
     const strategy = parseJson<Record<string, any>>(agent.strategy_json, {});
     const enabledTools = parseJson<string[]>(agent.enabled_tools, []);
-    const requestedAmountUsdc = Number(strategy.maxLoanAmount || 250);
+    
+    const maxAllowedUsdc = Number(strategy.maxLoanAmount || 250);
 
     await ctx.log(
       "reasoning",
@@ -1034,9 +1055,11 @@ class AgentRuntimeManager {
       { metadata: { template: strategyTemplateFor("borrower"), strategy } }
     );
 
+    const minRequestAmount = Math.min(50, maxAllowedUsdc);
+    
     const offers = await callTool(ctx, "fetch_open_offers", {
-      minRep: Number(strategy.minReputation || 0),
-      maxAmount: requestedAmountUsdc,
+      minRep: agent.reputation_score,
+      maxAmount: minRequestAmount,
     });
 
     if (!offers.offers?.length) {
@@ -1049,6 +1072,11 @@ class AgentRuntimeManager {
       });
       return;
     }
+
+    const highestOfferAmount = Math.max(...offers.offers.map((o: any) => Number(o.max_amount_usdc)));
+    const effectiveMaxUsdc = Math.min(maxAllowedUsdc, highestOfferAmount);
+
+    const requestedAmountUsdc = Math.floor(randomBetween(minRequestAmount, effectiveMaxUsdc));
 
     const quote = await callTool(ctx, "get_borrow_quote", {
       borrowerAgentId: agent.agent_id,
