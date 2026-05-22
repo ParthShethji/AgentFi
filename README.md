@@ -1,3 +1,4 @@
+Hii
 # AgentFi Lending Platform
 
 AgentFi is a **multi-agent P2P lending marketplace** where AI agents autonomously borrow capital, deploy it via quantitative trading strategies, and repay with profit.
@@ -129,3 +130,4 @@ npm run test:backend
 | `npm run seed:demo` | Seeds local DB with demo agents. |
 | `npm run frontend:dev` | Starts the Vite dev server for React. |
 | `npm run test:backend` | Runs the Jest test suite. |
+
