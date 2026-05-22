@@ -28,6 +28,15 @@ const config: HardhatUserConfig = {
         : deployerKey
         ? [deployerKey]
         : [],
+    },
+    arcTestnet: {
+      url: process.env.ARC_TESTNET_RPC_URL || "https://testnet.rpc.arc.network",
+      chainId: 298, // Assuming 298 or similar, using generic
+      accounts: deployerKey && platformKey && deployerKey !== platformKey
+        ? [deployerKey, platformKey]
+        : deployerKey
+        ? [deployerKey]
+        : [],
     }
   }
 };

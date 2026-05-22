@@ -7,7 +7,7 @@ export type EthereumProvider = {
 };
 
 export const ETHEREUM_SEPOLIA_CHAIN_ID = "0xaa36a7";
-export const BASE_SEPOLIA_CHAIN_ID = "0x14a34";
+export const ARC_TESTNET_CHAIN_ID = "0x14a34";
 
 const ENS_REGISTRY = "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e";
 const ENS_RESOLVER = "0x8FADE66B79cC9f707aB26799354482EB93a5B7dD";
@@ -59,7 +59,7 @@ export function getChainLabel(chainId?: string | null) {
   const normalized = chainId.toLowerCase();
   if (normalized === "0x7a69" || normalized === "0x539") return "Local Hardhat";
   if (normalized === ETHEREUM_SEPOLIA_CHAIN_ID) return "Ethereum Sepolia";
-  if (normalized === BASE_SEPOLIA_CHAIN_ID) return "Base Sepolia";
+  if (normalized === ARC_TESTNET_CHAIN_ID) return "Arc Network";
   if (normalized === "0x1") return "Ethereum Mainnet";
   return `Chain ${chainId}`;
 }
@@ -106,12 +106,12 @@ export async function switchToEthereumSepolia(): Promise<void> {
   );
 }
 
-export async function switchToBaseSepolia(): Promise<void> {
+export async function switchToArcNetwork(): Promise<void> {
   await switchEthereumChain(
-    BASE_SEPOLIA_CHAIN_ID,
-    "Base Sepolia",
-    ["https://sepolia.base.org"],
-    ["https://sepolia.basescan.org"]
+    ARC_TESTNET_CHAIN_ID,
+    "Arc Network",
+    ["https://testnet.rpc.arc.network"],
+    ["https://testnet.explorer.arc.network"]
   );
 }
 

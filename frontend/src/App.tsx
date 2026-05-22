@@ -10,7 +10,7 @@ import OnboardingPage from './pages/OnboardingPage';
 import CreateAgentPage from './pages/CreateAgentPage';
 import DashboardPage from './pages/DashboardPage';
 import SettlementsPage from './pages/SettlementsPage';
-import AdminFeedPage from './pages/AdminFeedPage';
+import FeedPage from './pages/FeedPage';
 import NavBar from './components/NavBar';
 import { useEffect } from 'react';
 
@@ -77,11 +77,11 @@ function AppRoutes() {
         }
       />
       <Route
-        path="/admin/feed"
+        path="/feed"
         element={
           <AnimatedRoute>
             <NavBar activeNav="admin" />
-            <AdminFeedPage />
+            <FeedPage />
           </AnimatedRoute>
         }
       />

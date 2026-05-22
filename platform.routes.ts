@@ -455,7 +455,7 @@ router.post("/agents/:agentId/fund", async (req, res) => {
     const actions: Record<string, unknown> = {};
 
     if (Number(ethAmount) > 0) {
-      actions.eth = await blockchain.fundEth(agent.wallet_address, ethAmount);
+      actions.nativeGas = await blockchain.fundNativeGas(agent.wallet_address, ethAmount);
     }
     if (usdcAmount > 0) {
       actions.usdc = await blockchain.mintUsdc(agent.wallet_address, usdcAmount);

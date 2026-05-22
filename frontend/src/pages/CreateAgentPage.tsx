@@ -8,7 +8,7 @@ import { useApp } from '../context/AppContext';
 import { useApi } from '../context/ApiContext';
 import { formatAddress } from '../wallet/metamask';
 import { ensNodes } from '../api';
-import { createEnsSubdomain, sendEthToAgent, sendUsdcToAgent, switchToBaseSepolia } from '../wallet/metamask';
+import { createEnsSubdomain, sendEthToAgent, sendUsdcToAgent, switchToArcNetwork } from '../wallet/metamask';
 
 const STEP_LABELS = ['Name Agent', 'Choose Role', 'Rules', 'Launch'];
 
@@ -156,8 +156,8 @@ export default function CreateAgentPage() {
         strategyObj.signals = [] as string[];
       }
 
-      // Step 1: Create agent on backend (generates wallet, registers on Base Sepolia)
-      setCreatingStep('[1/3] Creating agent on Base Sepolia...');
+      // Step 1: Create agent on backend (generates wallet, registers on Arc Network)
+      setCreatingStep('[1/3] Creating agent on Arc Network...');
       const agentRes = await api.createAgent({
         userId: userId!,
         role: backendRole,
@@ -196,10 +196,10 @@ export default function CreateAgentPage() {
         return;
       }
 
-      // Step 3: Funding agent wallet automatically on Base Sepolia
-      setCreatingStep(`[3/3] Funding agent wallet on Base Sepolia...\nPrompting for 0.0001 ETH & ${parsedMaxLoanAmount} USDC.`);
+      // Step 3: Funding agent wallet automatically on Arc Network
+      setCreatingStep(`[3/3] Funding agent wallet on Arc Network...\nPrompting for 0.0001 ETH & ${parsedMaxLoanAmount} USDC.`);
       try {
-        await switchToBaseSepolia();
+        await switchToArcNetwork();
         
         let usdcAddressStr = '';
         try {

@@ -6,7 +6,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, Area
 import { Agent, TRADE_HISTORY, PNL_VAULT_ALPHA, PNL_TRADER_BETA } from '../data/mockData';
 import { useApi } from '../context/ApiContext';
 import { useApp } from '../context/AppContext';
-import { getChainLabel, sendEthToAgent, sendUsdcToAgent, switchToBaseSepolia } from '../wallet/metamask';
+import { getChainLabel, sendEthToAgent, sendUsdcToAgent, switchToArcNetwork } from '../wallet/metamask';
 
 interface Props {
   agent: Agent;
@@ -185,11 +185,11 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
     }
 
     setFundingState('sending');
-    setFundingMessage('Switching to Base Sepolia...');
+    setFundingMessage('Switching to Arc Network...');
 
     try {
-      await switchToBaseSepolia();
-      setFundingMessage('Waiting for wallet confirmations on Base Sepolia...');
+      await switchToArcNetwork();
+      setFundingMessage('Waiting for wallet confirmations on Arc Network...');
 
       const txHashes: string[] = [];
       if (ethAmount) {
@@ -308,7 +308,7 @@ export default function AgentDetailPanel({ agent, backendAgentId, onClose }: Pro
                 Funding here uses the connected user wallet directly via ethers. Nothing is minted or pushed from the backend automatically.
               </div>
               <div style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
-                Funding network: <span style={{ color: 'var(--text-primary)' }}>Base Sepolia</span>. If MetaMask is on another chain, the app will switch it before sending.
+                Funding network: <span style={{ color: 'var(--text-primary)' }}>Arc Network</span>. If MetaMask is on another chain, the app will switch it before sending.
               </div>
               <div style={{ fontFamily: 'Inter', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
                 Connected network: <span style={{ color: 'var(--text-primary)' }}>{getChainLabel(walletChainId)}</span>

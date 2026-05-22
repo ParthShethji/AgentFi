@@ -96,7 +96,7 @@ export default function NavBar({ activeNav = 'dashboard' }: Props) {
         {([
           { label: 'Dashboard', view: 'dashboard' as NavView, path: '/dashboard' },
           { label: 'Settlements', view: 'activity' as NavView, path: '/settlements' },
-          { label: 'Admin Feed', view: 'admin' as NavView, path: '/admin/feed' },
+          { label: 'Agent Feed', view: 'admin' as NavView, path: '/feed' },
         ]).map(({ label, view, path }) => (
           <button
             key={view}

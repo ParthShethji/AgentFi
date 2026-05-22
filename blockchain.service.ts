@@ -40,10 +40,10 @@ const logger = process.env.NODE_ENV === "test" ? console : require("./utils/logg
 
 // ─── Provider + Signer setup ──────────────────────────────────────────────────
 
-// Base Sepolia — lending contract, USDC, gas funding
-const provider = new JsonRpcProvider(process.env.BASE_SEPOLIA_RPC_URL || process.env.RPC_URL || "");
+// Arc Network — lending contract, USDC, gas funding
+const provider = new JsonRpcProvider(process.env.ARC_TESTNET_RPC_URL || process.env.RPC_URL || "");
 
-// Ethereum Sepolia (L1) — ENS only. ENS names live on L1, not on Base.
+// Ethereum Sepolia (L1) — ENS only. ENS names live on L1, not on Arc.
 // Falls back to provider if L1_SEPOLIA_RPC_URL is not set (local dev).
 const l1Provider = process.env.L1_SEPOLIA_RPC_URL
   ? new JsonRpcProvider(process.env.L1_SEPOLIA_RPC_URL)
@@ -233,14 +233,14 @@ export async function checkBalance(walletAddress: string) {
   return fromUsdc(balance);
 }
 
-export async function getEthBalance(walletAddress: string) {
+export async function getNativeGasBalance(walletAddress: string) {
   const balance = await provider.getBalance(walletAddress);
   return Number(ethers.formatEther(balance));
 }
 
 export async function getWalletFundingSnapshot(walletAddress: string) {
   const [ethBalance, usdcBalance] = await Promise.all([
-    getEthBalance(walletAddress),
+    getNativeGasBalance(walletAddress),
     checkBalance(walletAddress),
   ]);
 
@@ -285,20 +285,20 @@ export async function approveUsdc(walletPrivateKey: string, amountUsdc: number) 
 }
 
 /**
- * Send ETH from the deployer wallet to an agent wallet for gas.
+ * Send Native Gas from the deployer wallet to an agent wallet for gas.
  * For demo/hackathon use only.
  */
-export async function fundEth(toAddress: string, amountEth: string = "1.0") {
+export async function fundNativeGas(toAddress: string, amountGas: string = "1.0") {
   return enqueue("deployer", async () => {
     const result = await waitForTxWithRetry(
       () =>
         deployerWallet.sendTransaction({
           to: toAddress,
-          value: ethers.parseEther(amountEth),
+          value: ethers.parseEther(amountGas),
         }),
-      `fundEth(${toAddress}, ${amountEth})`
+      `fundNativeGas(${toAddress}, ${amountGas})`
     );
-    logger.info(`[blockchain] funded ${amountEth} ETH to ${toAddress}`);
+    logger.info(`[blockchain] funded ${amountGas} Native Gas to ${toAddress}`);
     return result;
   });
 }
